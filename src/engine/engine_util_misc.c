@@ -29,21 +29,6 @@
 #include "engine/engine_util_errmem.h"
 #include "engine/engine_util_spatial.h"
 
-// simple CSV logger for compliant MTU debugging
-static FILE* g_compliant_mtu_log = NULL;
-static void log_compliant_mtu_header_if_needed(void) {
-  if (!g_compliant_mtu_log) {
-    g_compliant_mtu_log = fopen("compliant_mtu_log.csv", "w");
-    if (g_compliant_mtu_log) {
-      fprintf(g_compliant_mtu_log,
-              "time,actuator_id,ctrl,act,tendon_length,tendon_velocity,trntype,moment_rownnz,"
-              "l_ce,v_ce,l_se,F_mtu,"
-              "l_ce0,l_se0,f_se0,f_be0,f_pe0,f_lce0,fvce_denom,f_vce0,v_ce0,f_vce0_forward,"
-              "force_applied,force_balance_error,F_max,l_opt,l_slack,v_max,iterations\n");
-      fflush(g_compliant_mtu_log);
-    }
-  }
-}
 
 // detect time reset and abort simulation if time moves backwards
 static mjtNum g_last_time_seen = -1.0;
@@ -1623,12 +1608,7 @@ void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
                                      mjCompliantMuscleParams* params) {
   mjtNum* gainprm = m->actuator_gainprm + mjNGAIN * actuator_id;
   
-  // DEBUG:: Print raw gainprm values
-  // printf("DEBUG:: mju_compliantMuscleExtractParams - actuator_id=%d\n", actuator_id);
-  // for (int i = 0; i < mjNGAIN; i++) {
-  //   printf("DEBUG::   gainprm[%d] = %.6f\n", i, gainprm[i]);
-  // }
-  
+
   // Extract parameters in order: F_max, l_opt, l_slack, v_max, W, C, N, K, E_REF
   params->F_max = gainprm[0];
   params->l_opt = gainprm[1];
@@ -1641,18 +1621,7 @@ void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
   params->N = gainprm[6];
   params->K = gainprm[7];
   params->E_REF = gainprm[8];
-  
-  // DEBUG:: Print extracted parameters
-  // printf("DEBUG:: Extracted parameters:\n");
-  // printf("DEBUG::   F_max = %.6f\n", params->F_max);
-  // printf("DEBUG::   l_opt = %.6f\n", params->l_opt);
-  // printf("DEBUG::   l_slack = %.6f\n", params->l_slack);
-  // printf("DEBUG::   v_max = %.6f\n", params->v_max);
-  // printf("DEBUG::   W = %.6f\n", params->W);
-  // printf("DEBUG::   C = %.6f\n", params->C);
-  // printf("DEBUG::   N = %.6f\n", params->N);
-  // printf("DEBUG::   K = %.6f\n", params->K);
-  // printf("DEBUG::   E_REF = %.6f\n", params->E_REF);
+
 }
 
 // Initialize compliant muscle states (based on Python reset function)
@@ -1687,10 +1656,6 @@ void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
       mjtNum l_se = l_mtu - l_ce;
       d->muscle_l_se[i] = l_se;
       
-      // DEBUG:: Print initialization values
-      // printf("DEBUG:: mju_compliantMuscleInit - actuator_id=%d\n", i);
-      // printf("DEBUG::   l_mtu=%.6f, l_slack=%.6f, l_ce=%.6f, l_se=%.6f\n", 
-      //        l_mtu, params.l_slack, l_ce, l_se);
     }
   }
 }
@@ -1866,12 +1831,8 @@ static mjtNum mju_compliantMuscleVce0FromVmtu(
   const mjtNum VCE0_MIN = -1.0;
   const mjtNum VCE0_MAX =  1.0;
   if (v_ce0 < VCE0_MIN) {
-    // printf("[mju_compliantMuscleVce0FromVmtu] v_ce0 clamped: %f -> %f | passive: %f, active: %f, w: %f, A: %f, f_lce0: %f (MIN)\n", 
-    //   v_ce0, VCE0_MIN, v_ce0_passive, v_ce0_active, w, A, f_lce0);
     v_ce0 = VCE0_MIN;
   } else if (v_ce0 > VCE0_MAX) {
-    // printf("[mju_compliantMuscleVce0FromVmtu] v_ce0 clamped: %f -> %f | passive: %f, active: %f, w: %f, A: %f, f_lce0: %f (MAX)\n", 
-    //   v_ce0, VCE0_MAX, v_ce0_passive, v_ce0_active, w, A, f_lce0);
     v_ce0 = VCE0_MAX;
   }
 
@@ -2053,7 +2014,6 @@ static int mju_compliantMuscleNewtonStep(
     // Check convergence
     if (mju_abs(residual) < tolerance) {
       converged = 1;
-      printf("[mju_compliantMuscleSubstep] Converged at iteration %d\n", iter);
       break;
     }
 
@@ -2102,7 +2062,6 @@ static int mju_compliantMuscleNewtonStep(
   
   if (!converged) {
     // If Newton failed, fallback or warn. For now, just keep last guess.
-    // printf("Newton solver failed to converge. Residual: %g\n", residual);
   }
 
   // Final update
@@ -2163,8 +2122,6 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   mjtNum E_REF_BE = 0.5 * W;
   mjtNum E_REF_BE2 = 1.0 - W;
 
-  // Initialize logging header if needed
-  log_compliant_mtu_header_if_needed();
   g_last_time_seen = d->time;
 
   // Perform single integration step for the full timestep
@@ -2205,43 +2162,6 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
 
   mjtNum force_balance_error = f_se0 - (f_pe0 + f_ce0);
 
-  // Log values (if logging is enabled)
-  if (g_compliant_mtu_log) {
-    mjtNum force_applied = -F_mtu;
-
-    fprintf(g_compliant_mtu_log,
-            "%f,%d,%.9f,%.9f,%.9f,%.9f,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%d\n",
-            d->time + m->opt.timestep,      // time
-            actuator_id,                    // actuator_id
-            S,                              // ctrl (excitation signal)
-            A,                              // act (activation)
-            tendon_length,                  // tendon_length
-            tendon_velocity,                // tendon_velocity
-            m->actuator_trntype[actuator_id],  // trntype
-            d->moment_rownnz[actuator_id],     // moment_rownnz
-            l_ce,                           // l_ce
-            v_ce,                           // v_ce
-            l_se,                           // l_se
-            F_mtu,                          // F_mtu
-            l_ce0,                          // l_ce0
-            l_se0,                          // l_se0
-            f_se0,                          // f_se0
-            f_be0,                          // f_be0
-            f_pe0,                          // f_pe0
-            f_lce0,                         // f_lce0
-            fvce_denom,                     // fvce_denom
-            f_vce0,                         // f_vce0
-            v_ce0,                          // v_ce0
-            f_vce0_forward,                  // f_vce0_forward
-            force_applied,                  // force_applied
-            force_balance_error,            // force_balance_error
-            params.F_max,                   // F_max
-            params.l_opt,                   // l_opt
-            params.l_slack,                 // l_slack
-            params.v_max,                   // v_max
-            iterations);                    // iterations
-    fflush(g_compliant_mtu_log);
-  }
   
   // Note: activation is updated separately by MuJoCo's nextActivation() using act_dot,
   // so we don't store it here to avoid overwriting the integrated value

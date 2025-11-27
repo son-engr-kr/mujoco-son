@@ -442,14 +442,6 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
       mju_compliantMuscleUpdate(m, d, i, ctrl[i], tendon_length, tendon_velocity);
       // Use the computed muscle force as gain
       gain = d->muscle_F_mtu[i];
-      // DEBUG: report per-actuator MTU force and tendon length
-      if (0) {
-        mjtNum A_after = (act_first_dbg2 >= 0 && m->actuator_actnum[i] > 0) ? d->act[act_last_dbg2] : 0.0;
-        printf("DEBUG::  MTU i=%d ctrl=%.6f A_before=%.6f A_after=%.6f F_mtu=%.9f tend_len=%.9f tend_vel=%.9f\n",
-               i, (double)ctrl[i], (double)A_before, (double)A_after,
-               (double)gain, (double)tendon_length, (double)tendon_velocity);
-      }
-      // printf("CompliantMTU gain [id=%d]: %.9f\n", i, gain);
       break;
     }
     default:                        // user gain
