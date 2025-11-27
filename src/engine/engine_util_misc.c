@@ -1840,103 +1840,6 @@ static mjtNum mju_compliantMuscleVce0FromVmtu(
 }
 
 
-// Compute derivatives for muscle dynamics (used by RK4 integrator)
-// Returns dA/dt and dl_ce/dt (v_ce) at the current state
-static void mju_compliantMuscleDynamicsDerivative(
-    mjtNum S,                               // Excitation signal
-    mjtNum A,                               // Current activation
-    mjtNum l_ce,                            // Current contractile element length
-    mjtNum l_mtu,                           // MTU length
-    mjtNum v_mtu,                           // MTU velocity
-    const mjCompliantMuscleParams* params,  // Muscle parameters
-    mjMuscleDerivative* deriv,              // Output: derivatives
-    mjtNum* v_ce_out) {                     // Output: v_ce value (optional)
-
-  // Activation derivative from ECC dynamics
-  deriv->dA_dt = mju_compliantMuscleECCDerivative(S, A);
-
-  // Compute contractile element velocity (v_ce)
-  mjtNum l_se = l_mtu - l_ce;
-
-  // Normalized lengths
-  mjtNum l_ce0 = l_ce / params->l_opt;
-  mjtNum l_se0 = l_se / params->l_slack;
-
-  // Force calculation parameters
-  mjtNum W = params->W;
-  mjtNum C = params->C;
-  mjtNum N = params->N;
-  mjtNum K = params->K;
-  mjtNum E_REF = params->E_REF;
-  mjtNum E_REF_PE = W;
-  mjtNum E_REF_BE = 0.5 * W;
-  mjtNum E_REF_BE2 = 1.0 - W;
-
-  // Force-length and force-velocity relationships
-  mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
-  mjtNum f_be0 = mju_compliantMuscleFp0Ext(l_ce0, E_REF_BE, E_REF_BE2);
-  mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
-  mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
-
-  // Compute normalized CE velocity from MTU velocity and force balance,
-  // then scale to v_ce.
-  mjtNum v_ce0 = mju_compliantMuscleVce0FromVmtu(A, v_mtu, f_se0, f_pe0, f_lce0, params);
-  mjtNum v_ce  = params->l_opt * params->v_max * v_ce0;
-
-  // dl_ce/dt = v_ce
-  deriv->dl_ce_dt = v_ce;
-
-  // Optional output of v_ce
-  if (v_ce_out) {
-    *v_ce_out = v_ce;
-  }
-}
-
-
-// RK4 (4th-order Runge-Kutta) integration step for muscle dynamics
-// Integrates contractile element length (l_ce) only
-// Note: activation (A) is updated separately by MuJoCo's nextActivation() using act_dot
-static void mju_compliantMuscleRK4Step(
-    mjtNum S,                               // Excitation signal
-    mjtNum A,                               // Current activation (constant)
-    mjtNum* l_ce,                           // Contractile element length - modified in place
-    mjtNum* v_ce,                           // Current v_ce - updated
-    mjtNum l_mtu,                           // MTU length
-    mjtNum v_mtu,                           // MTU velocity
-    const mjCompliantMuscleParams* params,  // Muscle parameters
-    mjtNum dt) {                            // Time step
-
-  mjMuscleDerivative k1, k2, k3, k4;
-  mjtNum v_ce_temp;
-  mjtNum l_ce_k1, l_ce_k2, l_ce_k3;
-
-  // k1 = f(t, y)
-  mju_compliantMuscleDynamicsDerivative(S, A, *l_ce, l_mtu, v_mtu, params, &k1, &v_ce_temp);
-
-  // k2 = f(t + dt/2, y + dt*k1/2)
-  // Note: A is kept constant, only l_ce is integrated
-  l_ce_k1 = *l_ce + 0.5 * dt * k1.dl_ce_dt;
-  mju_compliantMuscleDynamicsDerivative(S, A, l_ce_k1, l_mtu, v_mtu, params, &k2, &v_ce_temp);
-
-  // k3 = f(t + dt/2, y + dt*k2/2)
-  l_ce_k2 = *l_ce + 0.5 * dt * k2.dl_ce_dt;
-  mju_compliantMuscleDynamicsDerivative(S, A, l_ce_k2, l_mtu, v_mtu, params, &k3, &v_ce_temp);
-
-  // k4 = f(t + dt, y + dt*k3)
-  l_ce_k3 = *l_ce + dt * k3.dl_ce_dt;
-  mju_compliantMuscleDynamicsDerivative(S, A, l_ce_k3, l_mtu, v_mtu, params, &k4, &v_ce_temp);
-
-  // y_next = y + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
-  // Note: activation (A) is updated separately by MuJoCo's nextActivation() using act_dot,
-  // so we only update l_ce here
-  *l_ce = *l_ce + (dt / 6.0) * (k1.dl_ce_dt + 2.0*k2.dl_ce_dt + 2.0*k3.dl_ce_dt + k4.dl_ce_dt);
-
-  // Update v_ce based on final state
-  mjMuscleDerivative final_deriv;
-  mju_compliantMuscleDynamicsDerivative(S, A, *l_ce, l_mtu, v_mtu, params, &final_deriv, v_ce);
-}
-
-
 // ODE15s-style stiff solver integration step for muscle dynamics
 // This is a simplified stiff solver similar to MATLAB's ode15s, suitable for stiff muscle dynamics
 // Uses backward Euler with under-relaxed fixed-point iteration to solve: y_{n+1} = y_n + dt * f(t_{n+1}, y_{n+1})
@@ -1944,7 +1847,6 @@ static void mju_compliantMuscleRK4Step(
 // Integrates contractile element length (l_ce) only
 // Activation (A) is updated separately by MuJoCo's nextActivation() using act_dot
 static int mju_compliantMuscleNewtonStep(
-    mjtNum S,                               // Excitation signal
     mjtNum A,                               // Current activation (constant)
     mjtNum* l_ce,                           // Contractile element length - modified in place
     mjtNum* v_ce,                           // Current v_ce - updated
@@ -2072,39 +1974,18 @@ static int mju_compliantMuscleNewtonStep(
 }
 
 
-// Explicit Euler integration step for muscle dynamics (baseline method)
-static void mju_compliantMuscleEulerStep(
-    mjtNum S,                               // Excitation signal
-    mjtNum A,                               // Current activation (constant)
-    mjtNum* l_ce,                           // Contractile element length - modified in place
-    mjtNum* v_ce,                           // Current v_ce - updated
-    mjtNum l_mtu,                           // MTU length
-    mjtNum v_mtu,                           // MTU velocity
-    const mjCompliantMuscleParams* params,  // Muscle parameters
-    mjtNum dt) {                            // Time step
-
-  // Compute derivatives at current state
-  mjMuscleDerivative deriv;
-  mju_compliantMuscleDynamicsDerivative(S, A, *l_ce, l_mtu, v_mtu, params, &deriv, v_ce);
-
-  // Explicit Euler: y_{n+1} = y_n + dt * f(t_n, y_n)
-  // Note: activation (A) is updated separately by MuJoCo's nextActivation() using act_dot,
-  // so we only update l_ce here
-  *l_ce = *l_ce + dt * deriv.dl_ce_dt;
-}
-
 
 // Main compliant muscle update function (equivalent to update_inter)
 void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id, 
-                               mjtNum S, mjtNum tendon_length, mjtNum tendon_velocity) {
+                               mjtNum A, mjtNum tendon_length, mjtNum tendon_velocity) {
   // Extract muscle parameters
   mjCompliantMuscleParams params;
   mju_compliantMuscleExtractParams(m, actuator_id, &params);
   
   // Get current states from correct activation slot
-  int act_first = m->actuator_actadr[actuator_id];
-  int act_last = act_first + m->actuator_actnum[actuator_id] - 1;
-  mjtNum A = (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) ? d->act[act_last] : 0.0;
+  // int act_first = m->actuator_actadr[actuator_id];
+  // int act_last = act_first + m->actuator_actnum[actuator_id] - 1;
+  // mjtNum A = (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) ? d->act[act_last] : 0.0;
   mjtNum l_ce = d->muscle_l_ce[actuator_id];
   mjtNum v_ce = d->muscle_v_ce[actuator_id];
   
@@ -2125,7 +2006,7 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   g_last_time_seen = d->time;
 
   // Perform single integration step for the full timestep
-  int iterations = mju_compliantMuscleNewtonStep(S, A, &l_ce, &v_ce, l_mtu, v_mtu, &params, m->opt.timestep);
+  int iterations = mju_compliantMuscleNewtonStep(A, &l_ce, &v_ce, l_mtu, v_mtu, &params, m->opt.timestep);
 
   // Calculate all values once (used for both logging and final state)
   mjtNum l_se = l_mtu - l_ce;

@@ -239,7 +239,6 @@ typedef enum mjtDyn_ {            // type of actuator dynamics
   mjDYN_FILTER,                   // linear filter: da/dt = (u-a) / tau
   mjDYN_FILTEREXACT,              // linear filter: da/dt = (u-a) / tau, with exact integration
   mjDYN_MUSCLE,                   // piece-wise linear filter with two time constants
-  mjDYN_COMPLIANT_MTU,            // compliant MTU from Song
   mjDYN_USER                      // user-defined dynamics type
 } mjtDyn;
 

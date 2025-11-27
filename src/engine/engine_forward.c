@@ -348,16 +348,6 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
       d->act_dot[act_last] = mju_muscleDynamics(
           ctrl[i], d->act[act_last], prm);
       break;
-    case mjDYN_COMPLIANT_MTU: {           // compliant MTU from Song (ECC activation dynamics)
-      // ECC dynamics (Song): tau depends on whether S>A
-      const mjtNum TAU_ACT = 0.01;   // [s]
-      const mjtNum TAU_DACT = 0.04;  // [s]
-      mjtNum S = mju_clip(ctrl[i], 0.0, 1.0);
-      mjtNum A = d->act[act_last];
-      mjtNum tau = (S > A) ? TAU_ACT : TAU_DACT;
-      d->act_dot[act_last] = (S - A) / mju_max(mjMINVAL, tau);
-      break;
-    }
 
     default:                        // user dynamics
       if (mjcb_act_dyn) {
@@ -428,18 +418,10 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
       break;
     case mjGAIN_COMPLIANT_MTU: {           // compliant MTU from Song
       // Use MuJoCo's tendon arrays directly (preferred for tendon transmissions). No fallbacks.
-      int tendon_id = m->actuator_trnid[2*i];
-      if (tendon_id < 0 || tendon_id >= m->ntendon) {
-        mju_error("Invalid tendon_id for actuator %d", i);
-      }
-      mjtNum tendon_length = d->ten_length[tendon_id];
-      mjtNum tendon_velocity = d->ten_velocity[tendon_id];
-      int act_first_dbg2 = m->actuator_actadr[i];
-      int act_last_dbg2 = act_first_dbg2 + m->actuator_actnum[i] - 1;
-      mjtNum A_before = (act_first_dbg2 >= 0 && m->actuator_actnum[i] > 0) ? d->act[act_last_dbg2] : 0.0;
+
 
       // Update compliant muscle state using tendon length directly
-      mju_compliantMuscleUpdate(m, d, i, ctrl[i], tendon_length, tendon_velocity);
+      mju_compliantMuscleUpdate(m, d, i, d->act[i], d->actuator_length[i], d->actuator_velocity[i]);
       // Use the computed muscle force as gain
       gain = d->muscle_F_mtu[i];
       break;

@@ -699,14 +699,13 @@ const mjMap mark_map[mark_sz] = {
 
 
 // dyn type
-const int dyn_sz = 7;
+const int dyn_sz = 6;
 const mjMap dyn_map[dyn_sz] = {
   {"none",        mjDYN_NONE},
   {"integrator",  mjDYN_INTEGRATOR},
   {"filter",      mjDYN_FILTER},
   {"filterexact", mjDYN_FILTEREXACT},
   {"muscle",      mjDYN_MUSCLE},
-  {"compliant_mtu", mjDYN_COMPLIANT_MTU},
   {"user",        mjDYN_USER}
 };
 
