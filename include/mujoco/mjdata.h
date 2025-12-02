@@ -222,10 +222,10 @@ struct mjData_ {
   mjtNum* plugin_state;      // plugin state                                     (npluginstate x 1)
   
   // compliant muscle states (activation A is stored in act array)
-  mjtNum* muscle_l_ce;       // contractile element length                      (na x 1)
-  mjtNum* muscle_v_ce;       // contractile element velocity                    (na x 1)
-  mjtNum* muscle_l_se;      // series elastic element length                  (na x 1)
-  mjtNum* muscle_F_mtu;      // muscle-tendon unit force                        (na x 1)
+  mjtNum* muscle_l_ce;       // contractile element length                      (nu x 1)
+  mjtNum* muscle_v_ce;       // contractile element velocity                    (nu x 1)
+  mjtNum* muscle_l_se;      // series elastic element length                  (nu x 1)
+  mjtNum* muscle_F_mtu;      // muscle-tendon unit force                        (nu x 1)
 
   // control
   mjtNum* ctrl;              // control                                          (nu x 1)

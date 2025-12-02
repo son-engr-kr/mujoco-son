@@ -2054,20 +2054,9 @@ static void _resetData(const mjModel* m, mjData* d, unsigned char debug_value) {
 
   // violate MuJoCo Initialization Order?
   mj_fwdPosition(m, d);
-  
-  // Initialize compliant muscle state arrays if needed
-  if (m->nu > 0) {
-    // Allocate muscle state arrays if not already allocated
-    if (!d->muscle_l_ce) {
-      d->muscle_l_ce = (mjtNum*)mju_malloc(m->nu * sizeof(mjtNum));
-      d->muscle_v_ce = (mjtNum*)mju_malloc(m->nu * sizeof(mjtNum));
-      d->muscle_l_se = (mjtNum*)mju_malloc(m->nu * sizeof(mjtNum));
-      d->muscle_F_mtu = (mjtNum*)mju_malloc(m->nu * sizeof(mjtNum));
-    }
-    
-    // Initialize muscle states for compliant MTU actuators (after tendon length calculation)
-    mju_compliantMuscleInit(m, d);
-  }
+
+  // Initialize compliant muscle states for compliant MTU actuators
+  mju_compliantMuscleInit(m, d);
 }
 
 

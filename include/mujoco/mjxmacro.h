@@ -606,6 +606,10 @@
     X   ( mjtNum,    act,               na,          1           ) \
     X   ( mjtNum,    qacc_warmstart,    nv,          1           ) \
     X   ( mjtNum,    plugin_state,      npluginstate, 1          ) \
+    X   ( mjtNum,    muscle_l_ce,       nu,          1           ) \
+    X   ( mjtNum,    muscle_v_ce,       nu,          1           ) \
+    X   ( mjtNum,    muscle_l_se,       nu,          1           ) \
+    X   ( mjtNum,    muscle_F_mtu,      nu,          1           ) \
     X   ( mjtNum,    ctrl,              nu,          1           ) \
     X   ( mjtNum,    qfrc_applied,      nv,          1           ) \
     X   ( mjtNum,    xfrc_applied,      nbody,       6           ) \

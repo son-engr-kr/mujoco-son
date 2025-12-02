@@ -52,7 +52,9 @@ pip wheel --no-deps --no-build-isolation \
   "$PROJECT_DIR/python/dist/mujoco-3.3.3+son2.tar.gz" \
   -w "$PROJECT_DIR/python/dist"
 ```
-
+- make a new tag
+- upload tar.gz, whl files in dist folder
+- copy link of whl file and use it when pip install
 
 # run simulate
 ```bash
