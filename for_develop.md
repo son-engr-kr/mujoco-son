@@ -61,3 +61,14 @@ pip wheel --no-deps --no-build-isolation \
 build\bin\simulate.exe
 ```
 
+
+
+# Test
+
+## Teleport muscle test (forward test)
+```
+cmake --build build --target teleport_muscle
+```
+```
+build\bin\teleport_muscle model_compliant_muscle_test.xml 1
+```

@@ -15,6 +15,7 @@
 #include "engine/engine_util_misc.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1840,6 +1841,85 @@ static mjtNum mju_compliantMuscleVce0FromVmtu(
 }
 
 
+// Solve for l_ce such that the muscle is in steady-state equilibrium (v_ce = 0)
+// F_se(l_mtu - l_ce) = F_pe(l_ce) + F_ce(l_ce, 0, A)
+static void mju_compliantMuscleSolveSteadyState(
+    mjtNum A,
+    mjtNum* l_ce,
+    mjtNum l_mtu,
+    const mjCompliantMuscleParams* params) {
+    
+  const int max_iterations = 100;
+  const mjtNum tolerance = 1e-6;
+  
+  mjtNum l_ce_curr = *l_ce;
+  mjtNum l_opt = params->l_opt;
+  mjtNum l_slack = params->l_slack;
+  mjtNum W = params->W;
+  mjtNum C = params->C;
+  mjtNum E_REF = params->E_REF;
+  mjtNum E_REF_PE = W;
+
+  // Heuristic: if current l_ce is unphysical, reset to l_opt
+  if (l_ce_curr > l_mtu) l_ce_curr = l_mtu - l_slack; 
+  if (l_ce_curr < 0.001) l_ce_curr = l_opt;
+
+  for (int iter = 0; iter < max_iterations; iter++) {
+    mjtNum l_se = l_mtu - l_ce_curr;
+    
+    // Hard constraint for slack tendon (same as NewtonStep)
+    if (l_se < l_slack) {
+        mjtNum target_l_ce = l_mtu - l_slack;
+        if (target_l_ce < 0.001) target_l_ce = 0.001;
+        l_ce_curr = target_l_ce;
+        l_se = l_mtu - l_ce_curr;
+    }
+
+    mjtNum l_ce0 = l_ce_curr / l_opt;
+    mjtNum l_se0 = l_se / l_slack;
+    
+    mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
+    mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
+    mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
+    // f_vce0 = 1.0 when v_ce = 0 (isometric)
+    mjtNum f_ce0 = A * f_lce0; 
+    
+    mjtNum residual = f_se0 - (f_pe0 + f_ce0);
+    
+    if (mju_abs(residual) < tolerance) {
+      break;
+    }
+    
+    // Finite difference Jacobian
+    mjtNum eps = 1e-5 * l_opt;
+    mjtNum l_ce_p = l_ce_curr + eps;
+    mjtNum l_se_p = l_mtu - l_ce_p;
+    
+    mjtNum l_ce0_p = l_ce_p / l_opt;
+    mjtNum l_se0_p = l_se_p / l_slack;
+    
+    mjtNum f_se0_p = mju_compliantMuscleFp0(l_se0_p, E_REF);
+    mjtNum f_pe0_p = mju_compliantMuscleFp0(l_ce0_p, E_REF_PE);
+    mjtNum f_lce0_p = mju_compliantMuscleFlce0(l_ce0_p, W, C);
+    mjtNum f_ce0_p = A * f_lce0_p;
+    
+    mjtNum residual_p = f_se0_p - (f_pe0_p + f_ce0_p);
+    
+    mjtNum J = (residual_p - residual) / eps;
+    
+    if (mju_abs(J) < 1e-6) J = (J < 0 ? -1e-6 : 1e-6);
+    
+    mjtNum delta = -residual / J;
+    l_ce_curr += 0.8 * delta; // Damping
+    
+    // Clamps
+    if (l_ce_curr < 0.001) l_ce_curr = 0.001;
+    if (l_ce_curr > l_mtu - 0.001) l_ce_curr = l_mtu - 0.001;
+  }
+  
+  *l_ce = l_ce_curr;
+}
+
 // ODE15s-style stiff solver integration step for muscle dynamics
 // This is a simplified stiff solver similar to MATLAB's ode15s, suitable for stiff muscle dynamics
 // Uses backward Euler with under-relaxed fixed-point iteration to solve: y_{n+1} = y_n + dt * f(t_{n+1}, y_{n+1})
@@ -2003,10 +2083,37 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   mjtNum E_REF_BE = 0.5 * W;
   mjtNum E_REF_BE2 = 1.0 - W;
 
-  g_last_time_seen = d->time;
+  // -- Teleport / Reset Detection --
+  // Reconstruct previous l_mtu from stored state
+  mjtNum l_mtu_prev = d->muscle_l_ce[actuator_id] + d->muscle_l_se[actuator_id];
+  mjtNum expected_change = v_mtu * m->opt.timestep;
+  mjtNum actual_change = l_mtu - l_mtu_prev;
+  
+  // Threshold: significant discontinuity
+  // We use a tight threshold (1e-4 = 0.1mm) to detect "teleportation" or 
+  // static analysis sweeps (like mj_forward called with changed qpos but no time step).
+  // If v_mtu accurately predicts the length change, error should be near zero.
+  mjtNum threshold = 1e-4; 
 
-  // Perform single integration step for the full timestep
-  int iterations = mju_compliantMuscleNewtonStep(A, &l_ce, &v_ce, l_mtu, v_mtu, &params, m->opt.timestep);
+  int is_teleport = 0;
+  if (mju_abs(actual_change - expected_change) > threshold) {
+    is_teleport = 1;
+  }
+  
+  // Also assume teleport if time has not advanced but l_mtu changed (re-evaluation)
+  // We avoid using g_last_time_seen for logic to prevent multi-actuator issues,
+  // relying primarily on the kinematic consistency check above.
+  
+  // g_last_time_seen = d->time; // Removed unsafe global state check
+
+  if (is_teleport) {
+    // Solve for steady-state equilibrium (v_ce = 0)
+    mju_compliantMuscleSolveSteadyState(A, &l_ce, l_mtu, &params);
+    v_ce = 0.0;
+  } else {
+    // Perform single integration step for the full timestep
+    mju_compliantMuscleNewtonStep(A, &l_ce, &v_ce, l_mtu, v_mtu, &params, m->opt.timestep);
+  }
 
   // Calculate all values once (used for both logging and final state)
   mjtNum l_se = l_mtu - l_ce;

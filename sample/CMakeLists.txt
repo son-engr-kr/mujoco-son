@@ -81,8 +81,14 @@ target_compile_options(testspeed PUBLIC ${MUJOCO_SAMPLE_COMPILE_OPTIONS})
 target_link_libraries(testspeed Threads::Threads)
 target_link_options(testspeed PRIVATE ${MUJOCO_SAMPLE_LINK_OPTIONS})
 
+add_executable(teleport_muscle teleport_muscle.c)
+target_compile_options(teleport_muscle PUBLIC ${MUJOCO_SAMPLE_COMPILE_OPTIONS})
+target_link_libraries(teleport_muscle Threads::Threads)
+target_link_options(teleport_muscle PRIVATE ${MUJOCO_SAMPLE_LINK_OPTIONS})
+
 target_link_libraries(compile mujoco::mujoco)
 target_link_libraries(testspeed mujoco::mujoco)
+target_link_libraries(teleport_muscle mujoco::mujoco)
 
 # Build samples that require GLFW.
 

@@ -8,7 +8,7 @@
     <default class="compliant_muscle">
       <general biasprm="0" biastype="none" ctrllimited="true" ctrlrange="0 1" 
                dynprm="0.01 0.04" dyntype="muscle" 
-               gainprm="1500 0.11 0.13 12.0 0.56 -2.995732274 1.5 5.0 0.04" 
+               gainprm="1500 0.1471 0.0873 12.0 0.56 -2.995732274 1.5 5.0 0.04" 
                gaintype="compliant_mtu"/>
     </default>
     
