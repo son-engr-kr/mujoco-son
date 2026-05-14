@@ -2,6 +2,39 @@
   <a href="#"><img alt="MuJoCo" src="banner.png" width="100%"/></a>
 </h1>
 
+> This is **mujoco-son**, a fork of upstream MuJoCo with a compliant-tendon
+> muscle model added. See [for_develop.md](for_develop.md) for build details.
+
+## Install (mujoco-son)
+
+Prebuilt wheels (CPython 3.11 only) and `simulate` executables for each
+platform are published on the
+[Releases page](https://github.com/son-engr-kr/mujoco-son/releases).
+Pick the line that matches your OS — only the version segment in the URL
+needs to be bumped between releases.
+
+```bash
+# Linux x86_64 (glibc >= 2.35 — Ubuntu 22.04+, Debian 12+, recent Fedora/RHEL)
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son2.3/mujoco-3.3.3+son2.3-cp311-cp311-linux_x86_64.whl
+
+# macOS Apple Silicon (M1/M2/M3/M4, macOS 11+)
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son2.3/mujoco-3.3.3+son2.3-cp311-cp311-macosx_11_0_arm64.whl
+
+# Windows x86_64
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son2.3/mujoco-3.3.3+son2.3-cp311-cp311-win_amd64.whl
+```
+
+For Python versions other than 3.11, build from the sdist
+(`mujoco-X.Y.Z+sonN.tar.gz` on the release page) or follow
+[for_develop.md](for_develop.md).
+
+The standalone `simulate` GUI is also available as a per-OS bundle on the
+same release page (`mujoco-son-{linux,macos,windows}-x86_64.{tar.gz,zip}`).
+
+---
+
+
+
 <p>
   <a href="https://github.com/google-deepmind/mujoco/actions/workflows/build.yml?query=branch%3Amain" alt="GitHub Actions">
     <img src="https://img.shields.io/github/actions/workflow/status/google-deepmind/mujoco/build.yml?branch=main">
