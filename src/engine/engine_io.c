@@ -1150,6 +1150,7 @@ static void copyM2Sparse(const mjModel* m, mjData* d, int* dst, const int* src,
     rowadr = d->D_rowadr;
   } else {
     mjERROR("unsupported sparsity structure (reduced + upper)");
+    return;
   }
 
   mj_markStack(d);
