@@ -175,6 +175,7 @@ jobs:
         -DCMAKE_BUILD_TYPE:STRING=Release
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL=OFF
         -DCMAKE_INSTALL_PREFIX:STRING=${{ matrix.tmpdir }}/mujoco_install
+        -DCMAKE_POLICY_VERSION_MINIMUM:STRING=3.5
         -DMUJOCO_BUILD_EXAMPLES:BOOL=OFF
         ${{ matrix.cmake_args }}
     - name: Build MuJoCo
@@ -219,6 +220,7 @@ jobs:
         cmake ..
         -DCMAKE_BUILD_TYPE:STRING=Release
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL=OFF
+        -DCMAKE_POLICY_VERSION_MINIMUM:STRING=3.5
         -Dmujoco_ROOT:STRING=${{ matrix.tmpdir }}/mujoco_install
         ${{ matrix.cmake_args }}
     - name: Build samples
@@ -232,6 +234,7 @@ jobs:
         cmake ..
         -DCMAKE_BUILD_TYPE:STRING=Release
         -DCMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL=OFF
+        -DCMAKE_POLICY_VERSION_MINIMUM:STRING=3.5
         -Dmujoco_ROOT:STRING=${{ matrix.tmpdir }}/mujoco_install
         ${{ matrix.cmake_args }}
     - name: Build simulate
