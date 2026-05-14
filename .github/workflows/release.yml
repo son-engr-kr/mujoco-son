@@ -52,14 +52,9 @@ jobs:
             # is single-arch, which then breaks delocate.
             python_host_platform: macosx-11.0-arm64
             python_arch: x64
-          - os: macos-15-large
-            label: macos-x86_64
-            shell: bash
-            cmake_args: -G Ninja "-DMUJOCO_CXX_FLAGS=-Wno-error"
-            archflags: -arch x86_64
-            macosx_deployment_target: "11.0"
-            python_host_platform: macosx-11.0-x86_64
-            python_arch: x64
+          # macos-15-large (Intel Mac, x86_64) requires a paid GitHub plan.
+          # Disabled until billing is configured. Apple Silicon (macos-arm64)
+          # covers the vast majority of current macOS users.
           - os: windows-2022
             label: windows-x86_64
             shell: bash
@@ -166,8 +161,13 @@ jobs:
         MUJOCO_PATH: ${{ env.WORKSPACE }}
         ARCHFLAGS: ${{ matrix.archflags }}
         MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macosx_deployment_target }}
-        _PYTHON_HOST_PLATFORM: ${{ matrix.python_host_platform }}
       run: |
+        # Only export _PYTHON_HOST_PLATFORM when the matrix actually sets it
+        # (currently macOS only); an empty value confuses setuptools' build
+        # path naming and breaks the wheel build entirely.
+        if [[ -n "${{ matrix.python_host_platform }}" ]]; then
+          export _PYTHON_HOST_PLATFORM="${{ matrix.python_host_platform }}"
+        fi
         export MUJOCO_PLUGIN_PATH="${{ env.WORKSPACE }}/build/mujoco_plugin"
         pip wheel --no-deps --no-build-isolation python/dist/mujoco-*.tar.gz -w python/dist
 
