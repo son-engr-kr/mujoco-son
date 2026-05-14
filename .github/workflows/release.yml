@@ -237,7 +237,11 @@ jobs:
     name: Create GitHub release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Run as long as the build job has finished (even if some matrix entries
+    # failed), so e.g. a billing-blocked or transiently failing platform does
+    # not prevent the rest of the release from being assembled. The release
+    # is uploaded as a draft, so partial output can be reviewed before publish.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
     permissions:
       contents: write
     steps:
