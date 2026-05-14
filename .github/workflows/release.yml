@@ -38,19 +38,19 @@ jobs:
           - os: ubuntu-22.04
             label: linux-x86_64
             shell: bash
-            cmake_args: -G Ninja
+            cmake_args: -G Ninja "-DMUJOCO_CXX_FLAGS=-Wno-error"
             python_arch: x64
           - os: macos-15
             label: macos-arm64
             shell: bash
-            cmake_args: -G Ninja
+            cmake_args: -G Ninja "-DMUJOCO_CXX_FLAGS=-Wno-error"
             archflags: -arch arm64
             macosx_deployment_target: "11.0"
             python_arch: x64
           - os: macos-15-large
             label: macos-x86_64
             shell: bash
-            cmake_args: -G Ninja
+            cmake_args: -G Ninja "-DMUJOCO_CXX_FLAGS=-Wno-error"
             archflags: -arch x86_64
             macosx_deployment_target: "11.0"
             python_arch: x64
@@ -104,12 +104,22 @@ jobs:
       if: runner.os == 'Windows'
       run: echo "WORKSPACE=$(cygpath -m "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
 
-    - name: Install Python build deps
+    - name: Create venv and install Python build deps
+      # make_sdist.sh requires VIRTUAL_ENV to be set, so we create one and
+      # source it for the rest of the steps via $GITHUB_PATH / $GITHUB_ENV.
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install --require-hashes -r python/build_requirements.txt
+        python -m venv "${{ runner.temp }}/venv"
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          VENV_BIN="${{ runner.temp }}/venv/Scripts"
+        else
+          VENV_BIN="${{ runner.temp }}/venv/bin"
+        fi
+        echo "$VENV_BIN" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=${{ runner.temp }}/venv" >> "$GITHUB_ENV"
+        "$VENV_BIN/python" -m pip install --upgrade pip
+        "$VENV_BIN/python" -m pip install --require-hashes -r python/build_requirements.txt
         # Wheel repair tools (one per platform; harmless to install everywhere)
-        python -m pip install delocate delvewheel
+        "$VENV_BIN/python" -m pip install delocate delvewheel
 
     - name: Configure CMake
       run: |
@@ -118,7 +128,6 @@ jobs:
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
           -DMUJOCO_BUILD_TESTS=OFF \
           -DMUJOCO_TEST_PYTHON_UTIL=OFF \
-          "-DMUJOCO_CXX_FLAGS=-Wno-error" \
           ${{ matrix.cmake_args }}
 
     - name: Build MuJoCo + simulate
@@ -179,16 +188,16 @@ jobs:
       env:
         MUJOCO_GL: disable
       run: |
-        python -m venv /tmp/testvenv || python -m venv $RUNNER_TEMP/testvenv
-        if [[ -d /tmp/testvenv ]]; then VENV=/tmp/testvenv; else VENV="$RUNNER_TEMP/testvenv"; fi
+        TEST_VENV="${{ runner.temp }}/testvenv"
+        python -m venv "$TEST_VENV"
         if [[ "$RUNNER_OS" == "Windows" ]]; then
-          source "$VENV/Scripts/activate"
+          TEST_BIN="$TEST_VENV/Scripts"
         else
-          source "$VENV/bin/activate"
+          TEST_BIN="$TEST_VENV/bin"
         fi
-        pip install --upgrade pip
-        pip install python/dist/fixed/mujoco-*.whl
-        python -c "import mujoco; m=mujoco.MjModel.from_xml_string('<mujoco/>'); d=mujoco.MjData(m); mujoco.mj_step(m,d); print('OK', mujoco.__version__)"
+        "$TEST_BIN/python" -m pip install --upgrade pip
+        "$TEST_BIN/python" -m pip install python/dist/fixed/mujoco-*.whl
+        "$TEST_BIN/python" -c "import mujoco; m=mujoco.MjModel.from_xml_string('<mujoco/>'); d=mujoco.MjData(m); mujoco.mj_step(m,d); print('OK', mujoco.__version__)"
 
     - name: Package executable bundle (POSIX)
       if: runner.os != 'Windows'
