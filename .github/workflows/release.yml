@@ -46,6 +46,11 @@ jobs:
             cmake_args: -G Ninja "-DMUJOCO_CXX_FLAGS=-Wno-error"
             archflags: -arch arm64
             macosx_deployment_target: "11.0"
+            # _PYTHON_HOST_PLATFORM overrides setuptools' auto-detected wheel
+            # platform tag — without it, hosted Python 3.11 (universal2) would
+            # produce a universal2 wheel filename even though the binary inside
+            # is single-arch, which then breaks delocate.
+            python_host_platform: macosx-11.0-arm64
             python_arch: x64
           - os: macos-15-large
             label: macos-x86_64
@@ -53,6 +58,7 @@ jobs:
             cmake_args: -G Ninja "-DMUJOCO_CXX_FLAGS=-Wno-error"
             archflags: -arch x86_64
             macosx_deployment_target: "11.0"
+            python_host_platform: macosx-11.0-x86_64
             python_arch: x64
           - os: windows-2022
             label: windows-x86_64
@@ -160,6 +166,7 @@ jobs:
         MUJOCO_PATH: ${{ env.WORKSPACE }}
         ARCHFLAGS: ${{ matrix.archflags }}
         MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macosx_deployment_target }}
+        _PYTHON_HOST_PLATFORM: ${{ matrix.python_host_platform }}
       run: |
         export MUJOCO_PLUGIN_PATH="${{ env.WORKSPACE }}/build/mujoco_plugin"
         pip wheel --no-deps --no-build-isolation python/dist/mujoco-*.tar.gz -w python/dist
@@ -168,8 +175,10 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         mkdir -p python/dist/fixed
-        auditwheel repair python/dist/mujoco-*linux_*.whl -w python/dist/fixed \
-          --plat manylinux_2_28_x86_64
+        # Let auditwheel pick the lowest manylinux tag the binary actually
+        # supports; pinning to manylinux_2_28 on ubuntu-22.04 (glibc 2.35)
+        # fails because the binary picks up newer versioned symbols.
+        auditwheel repair python/dist/mujoco-*linux_*.whl -w python/dist/fixed
 
     - name: Repair wheel (macOS)
       if: runner.os == 'macOS'
