@@ -119,8 +119,12 @@ jobs:
         echo "VIRTUAL_ENV=${{ runner.temp }}/venv" >> "$GITHUB_ENV"
         "$VENV_BIN/python" -m pip install --upgrade pip
         "$VENV_BIN/python" -m pip install --require-hashes -r python/build_requirements.txt
-        # Wheel repair tools (one per platform; harmless to install everywhere)
-        "$VENV_BIN/python" -m pip install delocate delvewheel
+        # Wheel repair tools (one per platform; harmless to install everywhere).
+        # Pull auditwheel from PyPI unconstrained — the hashed pin in
+        # build_requirements.txt is 5.4.0, which lacks the smarter "auto"
+        # platform detection in 6.x and instead tries to downgrade the wheel
+        # to manylinux_2_5 and fails.
+        "$VENV_BIN/python" -m pip install -U auditwheel delocate delvewheel
 
     - name: Configure CMake
       run: |
@@ -175,10 +179,25 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         mkdir -p python/dist/fixed
-        # Let auditwheel pick the lowest manylinux tag the binary actually
-        # supports; pinning to manylinux_2_28 on ubuntu-22.04 (glibc 2.35)
-        # fails because the binary picks up newer versioned symbols.
-        auditwheel repair python/dist/mujoco-*linux_*.whl -w python/dist/fixed
+        WHL=$(ls python/dist/mujoco-*linux_x86_64.whl | head -1)
+        # auditwheel would normally fix rpaths and bundle deps here, but
+        # ubuntu-22.04 emits glibc 2.35 symbols that don't fit any current
+        # manylinux policy, so it refuses to repair. setup.py already
+        # bundles libmujoco.so into mujoco/ via _copy_external_libraries,
+        # so what's left is patching the extension rpaths from the absolute
+        # build-dir path to $ORIGIN. The wheel keeps its linux_x86_64 tag,
+        # which pip accepts for direct/URL installs on glibc-2.35+ systems.
+        UNPACK=$(mktemp -d)
+        wheel unpack -d "$UNPACK" "$WHL"
+        UNPACKED=$(ls "$UNPACK" | head -1)
+        PKG_DIR="$UNPACK/$UNPACKED/mujoco"
+        # Top-level extensions (mujoco/_*.so) and bundled libmujoco need to
+        # resolve siblings → $ORIGIN.
+        find "$PKG_DIR" -maxdepth 1 -name '*.so*' -exec patchelf --set-rpath '$ORIGIN' {} \;
+        # Plugin libraries (mujoco/plugin/*.so) need to reach libmujoco in
+        # the parent dir → $ORIGIN/..
+        find "$PKG_DIR/plugin" -name '*.so*' -exec patchelf --set-rpath '$ORIGIN/..' {} \; 2>/dev/null || true
+        wheel pack "$UNPACK/$UNPACKED" --dest-dir python/dist/fixed
 
     - name: Repair wheel (macOS)
       if: runner.os == 'macOS'
