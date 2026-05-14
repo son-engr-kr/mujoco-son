@@ -1,0 +1,259 @@
+# Build and publish release artifacts (Python wheels + simulate executable)
+# for Linux x86_64, macOS arm64, macOS x86_64, Windows x86_64.
+#
+# Triggers:
+#   - Pushing a tag matching `v*` (recommended: e.g. v3.3.3+son2.3)
+#   - Manual dispatch from the Actions tab
+#
+# Outputs:
+#   - One Python sdist (built once on Linux)
+#   - Four cp311 wheels (linux/mac arm64/mac x86_64/windows)
+#   - Four executable bundles (simulate + libraries + models)
+#   - A draft GitHub Release with all of the above attached
+#
+# Notes / known quirks (see for_develop.md and prior local build):
+#   - CMAKE_POLICY_VERSION_MINIMUM=3.5 is required for the bundled qhull dep
+#   - MUJOCO_CXX_FLAGS=-Wno-error is needed because son code has unused-var /
+#     unused-function / sometimes-uninitialized warnings that clang treats as
+#     errors but MSVC does not
+#   - On POSIX, plugins land in build/lib alongside libmujoco; we stage them
+#     into a dedicated build/mujoco_plugin/ so setup.py's plugin walk does not
+#     pick up libmujoco itself
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: linux-x86_64
+            shell: bash
+            cmake_args: -G Ninja
+            python_arch: x64
+          - os: macos-15
+            label: macos-arm64
+            shell: bash
+            cmake_args: -G Ninja
+            archflags: -arch arm64
+            macosx_deployment_target: "11.0"
+            python_arch: x64
+          - os: macos-15-large
+            label: macos-x86_64
+            shell: bash
+            cmake_args: -G Ninja
+            archflags: -arch x86_64
+            macosx_deployment_target: "11.0"
+            python_arch: x64
+          - os: windows-2022
+            label: windows-x86_64
+            shell: bash
+            cmake_args: -G Ninja
+            python_arch: x64
+
+    runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Prepare Linux
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libgl1-mesa-dev libxinerama-dev libxcursor-dev \
+          libxrandr-dev libxi-dev ninja-build patchelf
+
+    - name: Prepare macOS
+      if: runner.os == 'macOS'
+      run: brew install ninja
+
+    - name: Set up MSVC (Windows)
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Install Ninja (Windows)
+      if: runner.os == 'Windows'
+      uses: seanmiddleditch/gha-setup-ninja@v5
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        architecture: ${{ matrix.python_arch }}
+
+    - name: Set workspace path (POSIX)
+      if: runner.os != 'Windows'
+      run: echo "WORKSPACE=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
+    - name: Set workspace path (Windows)
+      if: runner.os == 'Windows'
+      run: echo "WORKSPACE=$(cygpath -m "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
+
+    - name: Install Python build deps
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install --require-hashes -r python/build_requirements.txt
+        # Wheel repair tools (one per platform; harmless to install everywhere)
+        python -m pip install delocate delvewheel
+
+    - name: Configure CMake
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DMUJOCO_BUILD_TESTS=OFF \
+          -DMUJOCO_TEST_PYTHON_UTIL=OFF \
+          "-DMUJOCO_CXX_FLAGS=-Wno-error" \
+          ${{ matrix.cmake_args }}
+
+    - name: Build MuJoCo + simulate
+      run: cmake --build build --config Release -j
+
+    - name: Stage plugins (POSIX)
+      if: runner.os != 'Windows'
+      run: |
+        mkdir -p build/mujoco_plugin
+        cp build/lib/libactuator.* build/mujoco_plugin/
+        cp build/lib/libelasticity.* build/mujoco_plugin/
+        cp build/lib/libsensor.* build/mujoco_plugin/
+        cp build/lib/libsdf_plugin.* build/mujoco_plugin/
+
+    - name: Stage plugins (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        mkdir -p build/mujoco_plugin
+        cp build/bin/actuator.dll build/mujoco_plugin/
+        cp build/bin/elasticity.dll build/mujoco_plugin/
+        cp build/bin/sensor.dll build/mujoco_plugin/
+        cp build/bin/sdf_plugin.dll build/mujoco_plugin/ || true
+
+    - name: Make sdist
+      working-directory: python
+      run: ./make_sdist.sh
+
+    - name: Build wheel
+      env:
+        MUJOCO_PATH: ${{ env.WORKSPACE }}
+        ARCHFLAGS: ${{ matrix.archflags }}
+        MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macosx_deployment_target }}
+      run: |
+        export MUJOCO_PLUGIN_PATH="${{ env.WORKSPACE }}/build/mujoco_plugin"
+        pip wheel --no-deps --no-build-isolation python/dist/mujoco-*.tar.gz -w python/dist
+
+    - name: Repair wheel (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        mkdir -p python/dist/fixed
+        auditwheel repair python/dist/mujoco-*linux_*.whl -w python/dist/fixed \
+          --plat manylinux_2_28_x86_64
+
+    - name: Repair wheel (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        mkdir -p python/dist/fixed
+        delocate-wheel -v -w python/dist/fixed python/dist/mujoco-*macosx_*.whl
+
+    - name: Repair wheel (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        mkdir -p python/dist/fixed
+        delvewheel repair python/dist/mujoco-*win_*.whl -w python/dist/fixed \
+          --add-path build/bin
+
+    - name: Smoke test wheel
+      env:
+        MUJOCO_GL: disable
+      run: |
+        python -m venv /tmp/testvenv || python -m venv $RUNNER_TEMP/testvenv
+        if [[ -d /tmp/testvenv ]]; then VENV=/tmp/testvenv; else VENV="$RUNNER_TEMP/testvenv"; fi
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          source "$VENV/Scripts/activate"
+        else
+          source "$VENV/bin/activate"
+        fi
+        pip install --upgrade pip
+        pip install python/dist/fixed/mujoco-*.whl
+        python -c "import mujoco; m=mujoco.MjModel.from_xml_string('<mujoco/>'); d=mujoco.MjData(m); mujoco.mj_step(m,d); print('OK', mujoco.__version__)"
+
+    - name: Package executable bundle (POSIX)
+      if: runner.os != 'Windows'
+      run: |
+        BUNDLE="mujoco-son-${{ matrix.label }}"
+        mkdir -p "$BUNDLE/bin" "$BUNDLE/lib"
+        cp build/bin/simulate "$BUNDLE/bin/"
+        cp build/lib/libmujoco.* "$BUNDLE/lib/"
+        cp build/lib/lib*.dylib "$BUNDLE/lib/" 2>/dev/null || true
+        cp build/lib/lib*.so* "$BUNDLE/lib/" 2>/dev/null || true
+        cp -r model "$BUNDLE/" 2>/dev/null || true
+        tar czf "${BUNDLE}.tar.gz" "$BUNDLE"
+
+    - name: Package executable bundle (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        BUNDLE="mujoco-son-${{ matrix.label }}"
+        mkdir -p "$BUNDLE"
+        cp build/bin/simulate.exe "$BUNDLE/"
+        cp build/bin/*.dll "$BUNDLE/"
+        cp -r model "$BUNDLE/" 2>/dev/null || true
+        7z a "${BUNDLE}.zip" "$BUNDLE/"
+
+    - name: Upload wheel artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: wheel-${{ matrix.label }}
+        path: python/dist/fixed/*.whl
+
+    - name: Upload sdist artifact (Linux only)
+      if: matrix.label == 'linux-x86_64'
+      uses: actions/upload-artifact@v4
+      with:
+        name: sdist
+        path: python/dist/mujoco-*.tar.gz
+
+    - name: Upload executable bundle
+      uses: actions/upload-artifact@v4
+      with:
+        name: bundle-${{ matrix.label }}
+        path: |
+          mujoco-son-*.tar.gz
+          mujoco-son-*.zip
+
+  release:
+    name: Create GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: List artifacts
+      run: find artifacts -type f | sort
+
+    - name: Create release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          artifacts/**/*.whl
+          artifacts/**/*.tar.gz
+          artifacts/**/*.zip
+        draft: true
+        generate_release_notes: true
