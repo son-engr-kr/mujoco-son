@@ -2053,9 +2053,6 @@ static void _resetData(const mjModel* m, mjData* d, unsigned char debug_value) {
   // copy signature from model
   d->signature = m->signature;
 
-  // violate MuJoCo Initialization Order?
-  mj_fwdPosition(m, d);
-
   // Initialize compliant muscle states for compliant MTU actuators
   mju_compliantMuscleInit(m, d);
 }
