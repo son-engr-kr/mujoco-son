@@ -118,12 +118,6 @@ jobs:
               -G Ninja
               -DMUJOCO_HARDEN:BOOL=ON
             tmpdir: "/tmp"
-          - os: macos-15-large
-            label: "macos-15-x86_64"
-            cmake_args: >-
-              -G Ninja
-              -DMUJOCO_HARDEN:BOOL=ON
-            tmpdir: "/tmp"
           - os: windows-2025
             label: "windows-2025"
             cmake_args: >-
