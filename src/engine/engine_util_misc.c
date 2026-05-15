@@ -1622,6 +1622,23 @@ void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
 
 }
 
+
+// Ratio l_slack / l_opt below which the free tendon is treated as rigid.
+// At this ratio the rigid approximation's fiber-length error is about
+// (l_slack / l_opt) * E_REF; with E_REF ~ 0.04 that is ~0.2% at 0.05 --
+// well below muscle fitting/measurement noise. Exposed as a named constant
+// so it can be retuned. See mju_compliantMuscleIsRigid.
+static const mjtNum kRigidTendonRatio = 0.05;
+
+
+// True when the tendon is short enough (relative to optimal fiber length)
+// that the series-elastic equilibrium solve becomes ill-conditioned and the
+// muscle should be evaluated with a rigid tendon instead.
+static int mju_compliantMuscleIsRigid(const mjCompliantMuscleParams* p) {
+  return p->l_slack < kRigidTendonRatio * p->l_opt;
+}
+
+
 // Initialize compliant muscle states (based on Python reset function)
 void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
   // Initialize muscle states for user actuators only (nu, not na)
@@ -1753,6 +1770,35 @@ static mjtNum mju_compliantMuscleForwardVce0(mjtNum v_ce0, mjtNum K, mjtNum N) {
 }
 
 
+// Rigid-tendon muscle force. For a tendon with negligible slack length the
+// series-elastic stretch is negligible against the fiber's operating range,
+// so the fiber takes the whole MTU length change: l_ce = l_mtu - l_slack and
+// v_ce = v_mtu. This avoids the singular l_se / l_slack normalization and the
+// equilibrium solve entirely. A rigid tendon transmits the fiber force
+// unchanged, so the MTU force is the fiber force
+// F_max * (f_pe0 + A*f_lce0*f_vce0). Returns tensile MTU force (same sign
+// convention as the compliant path) and, when the out pointers are non-NULL,
+// the implied fiber length and velocity.
+static mjtNum mju_compliantMuscleRigidForce(
+    mjtNum A, mjtNum l_mtu, mjtNum v_mtu,
+    const mjCompliantMuscleParams* p,
+    mjtNum* l_ce_out, mjtNum* v_ce_out) {
+  mjtNum l_ce  = mju_max(0.001, l_mtu - p->l_slack);  // fiber takes all length
+  mjtNum v_ce  = v_mtu;                               // tendon length is constant
+  mjtNum l_ce0 = l_ce / p->l_opt;
+  mjtNum v_ce0 = v_ce / (p->l_opt * p->v_max);
+
+  mjtNum f_pe0  = mju_compliantMuscleFp0(l_ce0, p->W);      // E_REF_PE = W
+  mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, p->W, p->C);
+  mjtNum f_vce0 = mju_compliantMuscleForwardVce0(v_ce0, p->K, p->N);
+
+  if (l_ce_out) *l_ce_out = l_ce;
+  if (v_ce_out) *v_ce_out = v_ce;
+
+  return p->F_max * (f_pe0 + A * f_lce0 * f_vce0);
+}
+
+
 // Solve for l_ce such that the muscle is in steady-state equilibrium (v_ce = 0)
 // F_se(l_mtu - l_ce) = F_pe(l_ce) + F_ce(l_ce, 0, A)
 static void mju_compliantMuscleSolveSteadyState(
@@ -1761,9 +1807,17 @@ static void mju_compliantMuscleSolveSteadyState(
     mjtNum l_mtu,
     const mjCompliantMuscleParams* params) {
     
+  // Rigid-tendon fallback: a negligible free tendon makes the series-elastic
+  // normalization (l_se / l_slack) singular and stalls this solver. Treat the
+  // tendon as rigid and assign the fiber length algebraically.
+  if (mju_compliantMuscleIsRigid(params)) {
+    *l_ce = mju_max(0.001, l_mtu - params->l_slack);
+    return;
+  }
+
   const int max_iterations = 100;
   const mjtNum tolerance = 1e-6;
-  
+
   mjtNum l_ce_curr = *l_ce;
   mjtNum l_opt = params->l_opt;
   mjtNum l_slack = params->l_slack;
@@ -1846,6 +1900,15 @@ static int mju_compliantMuscleNewtonStep(
     mjtNum v_mtu,                           // MTU velocity
     const mjCompliantMuscleParams* params,  // Muscle parameters
     mjtNum dt) {                            // Time step
+
+  // Rigid-tendon fallback: a negligible free tendon makes the series-elastic
+  // normalization (l_se / l_slack) singular and stalls this solver. Treat the
+  // tendon as rigid: the fiber takes all length change, so v_ce = v_mtu.
+  if (mju_compliantMuscleIsRigid(params)) {
+    *l_ce = mju_max(0.001, l_mtu - params->l_slack);
+    *v_ce = v_mtu;
+    return 0;
+  }
 
   const int max_iterations = 50;          // Max fixed-point iterations
   const mjtNum tolerance = 1e-5;          // Convergence tolerance
@@ -1985,6 +2048,23 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   mjtNum v_mtu = tendon_velocity;
 
   mjtNum E_REF = params.E_REF;
+
+  // Rigid-tendon fallback: muscles with a negligible free tendon (l_slack much
+  // smaller than l_opt) make the series-elastic normalization (l_se / l_slack)
+  // singular, which stalls the equilibrium solvers and yields a constant force.
+  // For these the tendon is treated as rigid: the fiber length is algebraic,
+  // no equilibrium solve and no division by l_slack. This path holds no
+  // integrated solver state, so teleport/reset detection is skipped as well.
+  if (mju_compliantMuscleIsRigid(&params)) {
+    mjtNum l_ce_rigid, v_ce_rigid;
+    mjtNum F_mtu = mju_compliantMuscleRigidForce(A, l_mtu, v_mtu, &params,
+                                                 &l_ce_rigid, &v_ce_rigid);
+    d->muscle_l_ce[actuator_id] = l_ce_rigid;
+    d->muscle_v_ce[actuator_id] = v_ce_rigid;
+    d->muscle_l_se[actuator_id] = params.l_slack;
+    d->muscle_F_mtu[actuator_id] = F_mtu;
+    return;
+  }
 
   // -- Teleport / Reset Detection --
   // Reconstruct previous l_mtu from stored state
