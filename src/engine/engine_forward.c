@@ -31,6 +31,7 @@
 #include "engine/engine_island.h"
 #include "engine/engine_io.h"
 #include "engine/engine_macro.h"
+#include "engine/engine_muscle_mtu.h"
 #include "engine/engine_passive.h"
 #include "engine/engine_plugin.h"
 #include "engine/engine_sensor.h"
@@ -426,6 +427,28 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
       gain = d->muscle_F_mtu[i];
       break;
     }
+
+    case mjGAIN_MILLARD_MTU:               // OpenSim Millard2012EquilibriumMuscle
+    case mjGAIN_HYFYDY_MTU: {              // Hyfydy muscle_force_m2012fast
+      // These solve their own fiber equilibrium and produce a force directly, so `gain` is
+      // only carried for reporting; the force is taken from muscle_F_mtu below.
+      //
+      // The activation is the actuator's LAST activation variable, the same one the
+      // gain*act path uses, so dyntype="muscle" gives Millard's first-order activation
+      // dynamics. An actuator with no activation state is driven by ctrl directly, which
+      // is what dyntype="none" means for a muscle: excitation applied without a lag.
+      mjtNum act_mtu;
+      if (m->actuator_actadr[i] == -1) {
+        act_mtu = ctrl[i];
+      } else {
+        int act_adr = m->actuator_actadr[i] + m->actuator_actnum[i] - 1;
+        act_mtu = m->actuator_actearly[i] ? nextActivation(m, d, i, act_adr, d->act_dot[act_adr])
+                                          : d->act[act_adr];
+      }
+      mju_mtuMuscleUpdate(m, d, i, act_mtu, d->actuator_length[i], d->actuator_velocity[i]);
+      gain = d->muscle_F_mtu[i];
+      break;
+    }
     default:                        // user gain
       if (mjcb_act_gain) {
         gain = mjcb_act_gain(m, d, i);
@@ -435,7 +458,11 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
     }
 
     // set force = gain .* [ctrl/act]
-    if ((mjtGain)m->actuator_gaintype[i] == mjGAIN_COMPLIANT_MTU) {
+    // The MTU gains already produced a tensile force in muscle_F_mtu; a muscle pulls, i.e.
+    // it shortens its transmission, so the actuator force is the negated tendon force.
+    if ((mjtGain)m->actuator_gaintype[i] == mjGAIN_COMPLIANT_MTU ||
+        (mjtGain)m->actuator_gaintype[i] == mjGAIN_MILLARD_MTU ||
+        (mjtGain)m->actuator_gaintype[i] == mjGAIN_HYFYDY_MTU) {
       // Logging is now handled inside mju_compliantMuscleUpdate
       // Directly apply computed F_mtu as actuator force (no clipping)
       force[i] = -d->muscle_F_mtu[i];

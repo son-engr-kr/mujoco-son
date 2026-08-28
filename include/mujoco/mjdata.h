@@ -226,6 +226,7 @@ struct mjData_ {
   mjtNum* muscle_v_ce;       // contractile element velocity                    (nu x 1)
   mjtNum* muscle_l_se;      // series elastic element length                  (nu x 1)
   mjtNum* muscle_F_mtu;      // muscle-tendon unit force                        (nu x 1)
+  uintptr_t* muscle_curve;   // baked Millard curve tables, 0 if unused          (nu x 4)
 
   // control
   mjtNum* ctrl;              // control                                          (nu x 1)

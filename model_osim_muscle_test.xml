@@ -1,0 +1,88 @@
+<mujoco model="osim_muscle_test">
+  <!-- Three compliant-tendon muscle models pulling identical loads, side by side:
+       the Song muscle this fork already had, OpenSim's Millard2012EquilibriumMuscle,
+       and Hyfydy's muscle_force_m2012fast. Drive all three from the same control and
+       the difference you see is the muscle model.
+
+       millard_mtu / hyfydy_mtu gainprm (see doc/muscle_mtu.rst for all 32 slots):
+         0 max_isometric_force   1 optimal_fiber_length  2 tendon_slack_length
+         3 max_contraction_velocity [l_opt/s]            4 pennation_angle_at_optimal [rad]
+         5 fiber_damping         6 Newton tolerance      8.. OpenSim curve shape parameters
+       A zero in any slot means that property's OpenSim default, so the six below are all
+       a muscle with default curves needs. -->
+  <option timestep="0.001" gravity="0 0 -9.81" integrator="Euler"/>
+
+  <default>
+    <default class="mtu">
+      <general biastype="none" ctrllimited="true" ctrlrange="0 1"
+               dyntype="muscle" dynprm="0.01 0.04"/>
+    </default>
+    <default class="load">
+      <joint type="slide" axis="0 0 1" damping="0"/>
+      <geom type="sphere" size="0.012" mass="20"/>
+      <site size="0.005"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <light pos="0 -0.5 1"/>
+    <geom name="floor" type="plane" size="1 1 0.05" pos="0 0 -0.3" rgba=".3 .3 .35 1"/>
+
+    <!-- anchors -->
+    <site name="anchor_song"    pos="-0.15 0 0.30" size="0.006" rgba="0 0 1 1"/>
+    <site name="anchor_millard" pos=" 0.00 0 0.30" size="0.006" rgba="1 .5 0 1"/>
+    <site name="anchor_hyfydy"  pos=" 0.15 0 0.30" size="0.006" rgba="0 .8 .3 1"/>
+
+    <body name="load_song" pos="-0.15 0 0" childclass="load">
+      <joint name="slide_song"/>
+      <site name="ins_song" rgba="0 0 1 1"/>
+      <geom rgba="0 0 1 1"/>
+    </body>
+    <body name="load_millard" pos="0 0 0" childclass="load">
+      <joint name="slide_millard"/>
+      <site name="ins_millard" rgba="1 .5 0 1"/>
+      <geom rgba="1 .5 0 1"/>
+    </body>
+    <body name="load_hyfydy" pos="0.15 0 0" childclass="load">
+      <joint name="slide_hyfydy"/>
+      <site name="ins_hyfydy" rgba="0 .8 .3 1"/>
+      <geom rgba="0 .8 .3 1"/>
+    </body>
+  </worldbody>
+
+  <tendon>
+    <spatial name="ten_song" width="0.003" rgba="0 0 1 1">
+      <site site="anchor_song"/><site site="ins_song"/>
+    </spatial>
+    <spatial name="ten_millard" width="0.003" rgba="1 .5 0 1">
+      <site site="anchor_millard"/><site site="ins_millard"/>
+    </spatial>
+    <spatial name="ten_hyfydy" width="0.003" rgba="0 .8 .3 1">
+      <site site="anchor_hyfydy"/><site site="ins_hyfydy"/>
+    </spatial>
+  </tendon>
+
+  <actuator>
+    <!-- Song: F_max, l_opt, l_slack, v_max, W, C, N, K, E_REF -->
+    <general class="mtu" name="song" tendon="ten_song" gaintype="compliant_mtu"
+             gainprm="3000 0.15 0.15 10 0.56 -2.995732274 1.5 5.0 0.04"/>
+
+    <general class="mtu" name="millard" tendon="ten_millard" gaintype="millard_mtu"
+             gainprm="3000 0.15 0.15 10 0.15 0.1"/>
+
+    <general class="mtu" name="hyfydy" tendon="ten_hyfydy" gaintype="hyfydy_mtu"
+             gainprm="3000 0.15 0.15 10 0.15 0.1"/>
+  </actuator>
+
+  <sensor>
+    <tendonpos name="len_song" tendon="ten_song"/>
+    <tendonpos name="len_millard" tendon="ten_millard"/>
+    <tendonpos name="len_hyfydy" tendon="ten_hyfydy"/>
+    <actuatorfrc name="frc_song" actuator="song"/>
+    <actuatorfrc name="frc_millard" actuator="millard"/>
+    <actuatorfrc name="frc_hyfydy" actuator="hyfydy"/>
+    <jointpos name="pos_song" joint="slide_song"/>
+    <jointpos name="pos_millard" joint="slide_millard"/>
+    <jointpos name="pos_hyfydy" joint="slide_hyfydy"/>
+  </sensor>
+</mujoco>

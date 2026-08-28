@@ -610,6 +610,7 @@
     X   ( mjtNum,    muscle_v_ce,       nu,          1           ) \
     X   ( mjtNum,    muscle_l_se,       nu,          1           ) \
     X   ( mjtNum,    muscle_F_mtu,      nu,          1           ) \
+    X   ( uintptr_t, muscle_curve,      nu,          4           ) \
     X   ( mjtNum,    ctrl,              nu,          1           ) \
     X   ( mjtNum,    qfrc_applied,      nv,          1           ) \
     X   ( mjtNum,    xfrc_applied,      nbody,       6           ) \

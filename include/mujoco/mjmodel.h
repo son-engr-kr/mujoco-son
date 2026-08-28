@@ -36,7 +36,10 @@
 
 #define mjNEQDATA       11        // number of eq_data fields
 #define mjNDYN          10        // number of actuator dynamics parameters
-#define mjNGAIN         10        // number of actuator gain parameters
+#define mjNGAIN         32        // number of actuator gain parameters
+                                  // (32, not upstream's 10: the millard_mtu gain carries
+                                  //  OpenSim's full Millard2012 curve parameterisation,
+                                  //  24 shape parameters on top of 8 mechanical ones)
 #define mjNBIAS         10        // number of actuator bias parameters
 #define mjNFLUID        12        // number of fluid interaction parameters
 #define mjNREF          2         // number of solver reference parameters
@@ -248,6 +251,8 @@ typedef enum mjtGain_ {           // type of actuator gain
   mjGAIN_AFFINE,                  // const + kp*length + kv*velocity
   mjGAIN_MUSCLE,                  // muscle FLV curve computed by mju_muscleGain()
   mjGAIN_COMPLIANT_MTU,           // compliant MTU from Song
+  mjGAIN_MILLARD_MTU,             // OpenSim Millard2012EquilibriumMuscle (damped)
+  mjGAIN_HYFYDY_MTU,              // Hyfydy muscle_force_m2012fast
   mjGAIN_USER                     // user-defined gain type
 } mjtGain;
 

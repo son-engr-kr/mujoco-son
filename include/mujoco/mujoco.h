@@ -1229,6 +1229,23 @@ MJAPI void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_i
                                      mjtNum S, mjtNum tendon_length, mjtNum tendon_velocity);
 MJAPI mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep);
 
+// Millard2012 / Hyfydy muscle-tendon units (gaintype "millard_mtu" / "hyfydy_mtu"). The 32
+// gainprm slots map 1:1 onto an OpenSim Millard2012EquilibriumMuscle's properties; zero in any
+// slot means that property's OpenSim default. See src/engine/engine_muscle_mtu.h for the slots.
+MJAPI void mju_mtuMuscleInit(const mjModel* m, mjData* d);
+MJAPI void mju_mtuMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
+                               mjtNum act, mjtNum length, mjtNum velocity);
+
+// One normalized muscle curve and, if deriv is not NULL, its slope. curve selects the curve:
+// 0 = active force-length, 1 = passive force-length, 2 = tendon force-length,
+// 3 = force-velocity. These are the curves the solvers above evaluate. mju_millardCurve takes a
+// gainprm block for the curve shape; NULL asks for OpenSim's defaults.
+MJAPI mjtNum mju_millardCurve(int curve, mjtNum x, const mjtNum* gainprm, mjtNum* deriv);
+MJAPI mjtNum mju_hyfydyCurve(int curve, mjtNum x, mjtNum* deriv);
+
+// Number of distinct Millard curves the process-wide bake cache holds.
+MJAPI int mju_millardCurveCacheSize(void);
+
 // Convert contact force to pyramid representation.
 MJAPI void mju_encodePyramid(mjtNum* pyramid, const mjtNum* force, const mjtNum* mu, int dim);
 

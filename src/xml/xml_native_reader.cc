@@ -711,12 +711,14 @@ const mjMap dyn_map[dyn_sz] = {
 
 
 // gain type
-const int gain_sz = 5;
+const int gain_sz = 7;
 const mjMap gain_map[gain_sz] = {
   {"fixed",       mjGAIN_FIXED},
   {"affine",      mjGAIN_AFFINE},
   {"muscle",      mjGAIN_MUSCLE},
   {"compliant_mtu", mjGAIN_COMPLIANT_MTU},
+  {"millard_mtu", mjGAIN_MILLARD_MTU},
+  {"hyfydy_mtu",  mjGAIN_HYFYDY_MTU},
   {"user",        mjGAIN_USER}
 };
 

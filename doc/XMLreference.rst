@@ -5164,21 +5164,30 @@ specify them independently.
 
 .. _actuator-general-gaintype:
 
-:at:`gaintype`: :at-val:`[fixed, affine, muscle, user], "fixed"`
+:at:`gaintype`: :at-val:`[fixed, affine, muscle, compliant_mtu, millard_mtu, hyfydy_mtu, user], "fixed"`
    The gain and bias together determine the output of the force generation mechanism, which is currently assumed to be
    affine. As already explained in :ref:`Actuation model <geActuation>`, the general formula is:
    scalar_force = gain_term \* (act or ctrl) + bias_term.
    The formula uses the activation state when present, and the control otherwise. The keywords have the following
    meaning:
 
-   ======= ===============================
-   Keyword Description
-   ======= ===============================
-   fixed   gain_term = gainprm[0]
-   affine  gain_term = gain_prm[0] + gain_prm[1]*length + gain_prm[2]*velocity
-   muscle  gain_term = mju_muscleGain(...)
-   user    gain_term = mjcb_act_gain(...)
-   ======= ===============================
+   ============= ===============================
+   Keyword       Description
+   ============= ===============================
+   fixed         gain_term = gainprm[0]
+   affine        gain_term = gain_prm[0] + gain_prm[1]*length + gain_prm[2]*velocity
+   muscle        gain_term = mju_muscleGain(...)
+   compliant_mtu Song compliant muscle-tendon unit
+   millard_mtu   OpenSim Millard2012EquilibriumMuscle
+   hyfydy_mtu    Hyfydy muscle_force_m2012fast
+   user          gain_term = mjcb_act_gain(...)
+   ============= ===============================
+
+   The three ``*_mtu`` gains are muscle-tendon units with a compliant tendon and a fiber-length
+   state. They do not follow the affine formula above: each solves its own fiber equilibrium and
+   produces the actuator force directly, with the activation entering the fiber force rather than
+   multiplying a gain. ``millard_mtu`` and ``hyfydy_mtu`` take their 32 gainprm slots as a 1:1 map
+   of an OpenSim or Hyfydy muscle's properties; see :doc:`muscle_mtu`.
 
 .. _actuator-general-biastype:
 

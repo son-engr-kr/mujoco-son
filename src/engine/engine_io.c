@@ -29,6 +29,7 @@
 #include <mujoco/mjxmacro.h>
 #include "engine/engine_crossplatform.h"
 #include "engine/engine_macro.h"
+#include "engine/engine_muscle_mtu.h"
 #include "engine/engine_plugin.h"
 #include "engine/engine_util_blas.h"
 #include "engine/engine_util_errmem.h"
@@ -2055,6 +2056,7 @@ static void _resetData(const mjModel* m, mjData* d, unsigned char debug_value) {
 
   // Initialize compliant muscle states for compliant MTU actuators
   mju_compliantMuscleInit(m, d);
+  mju_mtuMuscleInit(m, d);
 }
 
 

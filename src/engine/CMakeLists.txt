@@ -47,6 +47,10 @@ set(MUJOCO_ENGINE_SRCS
     engine_io.c
     engine_io.h
     engine_macro.h
+    engine_muscle_bake.cc
+    engine_muscle_millard_bezier.h
+    engine_muscle_mtu.c
+    engine_muscle_mtu.h
     engine_name.c
     engine_name.h
     engine_passive.c

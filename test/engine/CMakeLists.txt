@@ -43,6 +43,8 @@ mujoco_test(
   "MUJOCO_PLUGIN_DIR=$<TARGET_FILE_DIR:elasticity>"
 )
 
+mujoco_test(engine_muscle_mtu_test)
+
 mujoco_test(engine_passive_test)
 
 mujoco_test(engine_print_test)

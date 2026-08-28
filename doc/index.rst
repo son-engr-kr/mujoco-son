@@ -11,6 +11,7 @@
    computation/index.rst
    modeling
    XMLreference
+   muscle_mtu
    programming/index.rst
    APIreference/index.rst
    python
