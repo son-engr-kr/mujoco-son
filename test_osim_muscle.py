@@ -110,6 +110,61 @@ def test_state_stays_finite_while_driven(gaintype):
 
 
 @pytest.mark.parametrize('gaintype', _MODELS)
+def test_fiber_length_is_an_activation_variable(gaintype):
+    """act = [l_ce, activation]: the fiber is state, so mjSTATE_PHYSICS is a complete state."""
+    model = mujoco.MjModel.from_xml_string(_model_xml(gaintype, _gainprm()))
+    assert model.na == 2
+    ref = mujoco.MjData(model)
+    ref.ctrl[0] = 1.0
+    for _ in range(300):
+        mujoco.mj_step(model, ref)
+    assert ref.act[0] == pytest.approx(ref.muscle_l_ce[0])   # act[0] is the fiber length
+
+    state = np.empty(mujoco.mj_stateSize(model, mujoco.mjtState.mjSTATE_PHYSICS))
+    mujoco.mj_getState(model, ref, state, mujoco.mjtState.mjSTATE_PHYSICS)
+    for _ in range(200):
+        mujoco.mj_step(model, ref)
+
+    restored = mujoco.MjData(model)
+    restored.ctrl[0] = 1.0
+    mujoco.mj_setState(model, restored, state, mujoco.mjtState.mjSTATE_PHYSICS)
+    for _ in range(200):
+        mujoco.mj_step(model, restored)
+    assert restored.qpos[0] == ref.qpos[0]
+    assert restored.muscle_F_mtu[0] == ref.muscle_F_mtu[0]
+
+
+@pytest.mark.parametrize('gaintype', _MODELS)
+def test_forward_is_idempotent(gaintype):
+    """mj_forward is a pure function of the state: calling it twice must change nothing."""
+    model = mujoco.MjModel.from_xml_string(_model_xml(gaintype, _gainprm()))
+    data = mujoco.MjData(model)
+    data.ctrl[0] = 1.0
+    for _ in range(300):
+        mujoco.mj_step(model, data)
+    mujoco.mj_forward(model, data)
+    first = (data.muscle_F_mtu[0], data.act[0])
+    mujoco.mj_forward(model, data)
+    assert (data.muscle_F_mtu[0], data.act[0]) == first
+
+
+@pytest.mark.parametrize('gaintype', _MODELS)
+def test_rk4_matches_euler(gaintype):
+    """RK4 evaluates mj_forward at intermediate states; the fiber must integrate with them."""
+    q = []
+    for integrator in ('Euler', 'RK4'):
+        xml = _model_xml(gaintype, _gainprm()).replace(
+            '<option ', f'<option integrator="{integrator}" ')
+        model = mujoco.MjModel.from_xml_string(xml)
+        data = mujoco.MjData(model)
+        data.ctrl[0] = 1.0
+        for _ in range(2000):
+            mujoco.mj_step(model, data)
+        q.append(data.qpos[0])
+    assert q[1] == pytest.approx(q[0], abs=1e-6)
+
+
+@pytest.mark.parametrize('gaintype', _MODELS)
 def test_reset_is_repeatable(gaintype):
     """mj_resetData must put the muscle back where it started, bake cache and all."""
     model = mujoco.MjModel.from_xml_string(_model_xml(gaintype, _gainprm()))

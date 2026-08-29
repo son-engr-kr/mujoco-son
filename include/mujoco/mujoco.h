@@ -1221,20 +1221,24 @@ MJAPI mjtNum mju_compliantMuscleFlce0(mjtNum l_ce0, mjtNum w, mjtNum c);
 MJAPI mjtNum mju_compliantMuscleFp0(mjtNum l0, mjtNum e_ref);
 MJAPI mjtNum mju_compliantMuscleFp0Ext(mjtNum l0, mjtNum e_ref, mjtNum e_ref2);
 
-// Compliant muscle state management.
+// Compliant muscle state management. The actuator carries two activation variables,
+// act = [fiber_length, activation].
 MJAPI void mju_compliantMuscleInit(const mjModel* m, mjData* d);
-MJAPI void mju_compliantMuscleReset(const mjModel* m, mjData* d, int actuator_id, 
-                                    mjtNum phi1, mjtNum phi2);
-MJAPI void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id, 
-                                     mjtNum S, mjtNum tendon_length, mjtNum tendon_velocity);
+MJAPI void mju_compliantMuscleActDot(const mjModel* m, mjData* d, int actuator_id);
+MJAPI void mju_compliantMuscleEquilibrate(const mjModel* m, mjData* d);
+MJAPI mjtNum mju_compliantMuscleForceVel(const mjModel* m, const mjData* d,
+                                        int actuator_id);
 MJAPI mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep);
 
 // Millard2012 / Hyfydy muscle-tendon units (gaintype "millard_mtu" / "hyfydy_mtu"). The 32
 // gainprm slots map 1:1 onto an OpenSim Millard2012EquilibriumMuscle's properties; zero in any
 // slot means that property's OpenSim default. See src/engine/engine_muscle_mtu.h for the slots.
+// The actuator carries two activation variables, act = [fiber_length, activation].
 MJAPI void mju_mtuMuscleInit(const mjModel* m, mjData* d);
-MJAPI void mju_mtuMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
-                               mjtNum act, mjtNum length, mjtNum velocity);
+MJAPI void mju_mtuMuscleActDot(const mjModel* m, mjData* d, int actuator_id);
+MJAPI void mju_mtuMuscleEquilibrate(const mjModel* m, mjData* d);
+MJAPI mjtNum mju_mtuMuscleForceVel(const mjModel* m, const mjData* d,
+                                  int actuator_id);
 
 // One normalized muscle curve and, if deriv is not NULL, its slope. curve selects the curve:
 // 0 = active force-length, 1 = passive force-length, 2 = tendon force-length,

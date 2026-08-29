@@ -230,11 +230,11 @@ TEST_F(MuscleMtuTest, CurveTablesAreSharedBetweenMuscles) {
     </worldbody>
     <tendon><spatial name="t"><site site="anchor"/><site site="ins"/></spatial></tendon>
     <actuator>
-      <general name="a" tendon="t" gaintype="millard_mtu" biastype="none"
+      <general name="a" tendon="t" gaintype="millard_mtu" biastype="none" dyntype="muscle"
                gainprm="1000 0.1 0.1 10 0 0.1"/>
-      <general name="b" tendon="t" gaintype="millard_mtu" biastype="none"
+      <general name="b" tendon="t" gaintype="millard_mtu" biastype="none" dyntype="muscle"
                gainprm="2000 0.2 0.2 10 0.2 0.1"/>
-      <general name="c" tendon="t" gaintype="millard_mtu" biastype="none"
+      <general name="c" tendon="t" gaintype="millard_mtu" biastype="none" dyntype="muscle"
                gainprm="2000 0.2 0.2 10 0.2 0.1 0 0 0 0 0 0 0 0 0 0.5"/>
     </actuator>
   </mujoco>)";
@@ -329,7 +329,7 @@ TEST_F(MuscleMtuTest, EquilibriumHoldsDuringMotion) {
       data->ctrl[0] = 0.5 + 0.5*std::sin(0.02*i);   // keep it moving
       // the solve inside this step sees the PRE-step activation; mj_step integrates act
       // afterwards, so the residual has to be evaluated against the value that went in
-      double act_in = data->act[0];
+      double act_in = data->act[1];
       mj_step(model, data);
       if (i > 10) {
         worst = std::fmax(worst, std::fabs(Residual(model, data, 0, gain[0] == 'h', act_in)));
@@ -354,7 +354,9 @@ SweepDiffs SweepForce(const mjModel* m, mjData* d, double lo, double step, int n
     d->qpos[0] = lo + step*i;
     d->qvel[0] = 0;
     d->ctrl[0] = 0.5;
-    d->act[0] = 0.5;
+    d->act[1] = 0.5;                  // act = [l_ce, activation]
+    mj_forward(m, d);
+    mju_mtuMuscleEquilibrate(m, d);   // quasi-static: the fiber follows the pose
     mj_forward(m, d);
     f.push_back(d->muscle_F_mtu[0]);
   }
@@ -441,6 +443,106 @@ TEST_F(MuscleMtuTest, PennationClosesThePath) {
               DoubleNear(data->actuator_length[0], 1e-12));
   mj_deleteData(data);
   mj_deleteModel(model);
+}
+
+
+// ------------------------------------------------------------------------------------------
+// The MuJoCo state contract.
+//
+// The fiber length is an actuator ACTIVATION variable, act = [l_ce, activation], not a side
+// array. The three tests below are what that buys, and each of them failed before the fiber
+// moved into act.
+
+// mj_forward must be a pure function of the state: calling it twice must not move anything.
+TEST_F(MuscleMtuTest, ForwardIsIdempotent) {
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    mjModel* model = LoadModelFromString(HangingMuscle(gain, kDefaultPrm));
+    ASSERT_THAT(model, ::testing::NotNull()) << gain;
+    mjData* data = mj_makeData(model);
+    data->ctrl[0] = 1.0;
+    for (int i = 0; i < 300; i++) mj_step(model, data);   // get it moving
+
+    mj_forward(model, data);
+    double f1 = data->muscle_F_mtu[0], l1 = data->act[0];
+    mj_forward(model, data);
+    EXPECT_EQ(data->muscle_F_mtu[0], f1) << gain;
+    EXPECT_EQ(data->act[0], l1) << gain;
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
+}
+
+
+// mjSTATE_PHYSICS must capture the whole muscle: restoring it into a fresh mjData and continuing
+// has to reproduce the reference trajectory exactly.
+TEST_F(MuscleMtuTest, StateRoundTripsThroughMjStatePhysics) {
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    mjModel* model = LoadModelFromString(HangingMuscle(gain, kDefaultPrm));
+    ASSERT_THAT(model, ::testing::NotNull()) << gain;
+    EXPECT_EQ(model->na, 2) << gain;   // [l_ce, activation]
+
+    mjData* ref = mj_makeData(model);
+    ref->ctrl[0] = 1.0;
+    for (int i = 0; i < 300; i++) mj_step(model, ref);
+
+    std::vector<mjtNum> state(mj_stateSize(model, mjSTATE_PHYSICS));
+    mj_getState(model, ref, state.data(), mjSTATE_PHYSICS);
+    for (int i = 0; i < 200; i++) mj_step(model, ref);
+
+    mjData* restored = mj_makeData(model);
+    restored->ctrl[0] = 1.0;
+    mj_setState(model, restored, state.data(), mjSTATE_PHYSICS);
+    for (int i = 0; i < 200; i++) mj_step(model, restored);
+
+    EXPECT_EQ(restored->qpos[0], ref->qpos[0]) << gain;
+    EXPECT_EQ(restored->muscle_F_mtu[0], ref->muscle_F_mtu[0]) << gain;
+    mj_deleteData(ref);
+    mj_deleteData(restored);
+    mj_deleteModel(model);
+  }
+}
+
+
+// RK4 evaluates mj_forward at intermediate states; with the fiber in act it integrates the fiber
+// alongside everything else instead of advancing it once per evaluation.
+TEST_F(MuscleMtuTest, RungeKuttaAgreesWithEuler) {
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    double q[2];
+    for (int j = 0; j < 2; j++) {
+      std::string xml = HangingMuscle(gain, kDefaultPrm);
+      xml.replace(xml.find("<option "), 8, j ? "<option integrator=\"RK4\" " : "<option ");
+      mjModel* model = LoadModelFromString(xml);
+      ASSERT_THAT(model, ::testing::NotNull()) << gain;
+      mjData* data = mj_makeData(model);
+      data->ctrl[0] = 1.0;
+      for (int i = 0; i < 2000; i++) mj_step(model, data);
+      q[j] = data->qpos[0];
+      mj_deleteData(data);
+      mj_deleteModel(model);
+    }
+    EXPECT_NEAR(q[1], q[0], 1e-6) << gain;
+  }
+}
+
+
+// Equilibration reproduces the isometric equilibrium: after it, the residual is zero and the
+// fiber does not move on the next step.
+TEST_F(MuscleMtuTest, EquilibrateSolvesTheIsometricEquilibrium) {
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    mjModel* model = LoadModelFromString(HangingMuscle(gain, kDefaultPrm));
+    ASSERT_THAT(model, ::testing::NotNull()) << gain;
+    mjData* data = mj_makeData(model);
+    data->qpos[0] = 0.02;
+    data->act[1] = 0.5;
+    mj_forward(model, data);
+    mju_mtuMuscleEquilibrate(model, data);
+    mj_forward(model, data);
+
+    EXPECT_LT(std::fabs(Residual(model, data, 0, gain[0] == 'h')), 1e-6) << gain;
+    EXPECT_NEAR(data->act_dot[0], 0.0, 1e-6) << gain;   // fiber at rest
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
 }
 
 

@@ -20,6 +20,7 @@
 #include "engine/engine_core_constraint.h"
 #include "engine/engine_crossplatform.h"
 #include "engine/engine_io.h"
+#include "engine/engine_muscle_mtu.h"
 #include "engine/engine_passive.h"
 #include "engine/engine_support.h"
 #include "engine/engine_util_blas.h"
@@ -849,6 +850,20 @@ void mjd_actuator_vel(const mjModel* m, mjData* d) {
                                     m->actuator_lengthrange+2*i,
                                     m->actuator_acc0[i],
                                     m->actuator_gainprm + mjNGAIN*i);
+    }
+
+    // muscle-tendon units: these do not follow force = gain*act, so their velocity derivative
+    // goes straight into bias_vel. It is exactly zero for a compliant tendon -- the tendon force
+    // depends on tendon LENGTH, and the fiber's velocity dependence is mediated through the fiber
+    // state rather than through this partial -- and nonzero only on the rigid-tendon path, where
+    // the fiber velocity IS the path velocity.
+    else if (m->actuator_gaintype[i] == mjGAIN_COMPLIANT_MTU) {
+      bias_vel += mju_compliantMuscleForceVel(m, d, i);
+    }
+
+    else if (m->actuator_gaintype[i] == mjGAIN_MILLARD_MTU ||
+             m->actuator_gaintype[i] == mjGAIN_HYFYDY_MTU) {
+      bias_vel += mju_mtuMuscleForceVel(m, d, i);
     }
 
     // force = gain .* [ctrl/act]

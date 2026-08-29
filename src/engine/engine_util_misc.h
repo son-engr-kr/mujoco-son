@@ -15,6 +15,7 @@
 #ifndef MUJOCO_SRC_ENGINE_ENGINE_UTIL_MISC_H_
 #define MUJOCO_SRC_ENGINE_ENGINE_UTIL_MISC_H_
 
+#include <mujoco/mjdata.h>
 #include <mujoco/mjexport.h>
 #include <mujoco/mjmodel.h>
 #include <mujoco/mjtnum.h>
@@ -186,4 +187,15 @@ MJAPI mjtNum mju_sigmoid(mjtNum x);
 #ifdef __cplusplus
 }
 #endif
+
+// d(actuator_force)/d(actuator_velocity) for a compliant_mtu actuator, for the implicit
+// integrators. Exactly zero for a compliant tendon; nonzero only on the rigid-tendon path.
+MJAPI mjtNum mju_compliantMuscleForceVel(const mjModel* m, const mjData* d, int actuator_id);
+
+// act = [l_ce, activation]: fiber velocity into act_dot, force into mjData.
+MJAPI void mju_compliantMuscleActDot(const mjModel* m, mjData* d, int actuator_id);
+
+// Put every compliant_mtu fiber at its isometric equilibrium for the current pose.
+MJAPI void mju_compliantMuscleEquilibrate(const mjModel* m, mjData* d);
+
 #endif  // MUJOCO_SRC_ENGINE_ENGINE_UTIL_MISC_H_

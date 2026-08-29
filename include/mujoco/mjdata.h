@@ -37,10 +37,9 @@ typedef enum mjtState_ {          // state elements
   mjSTATE_MOCAP_POS     = 1<<9,   // positions of mocap bodies
   mjSTATE_MOCAP_QUAT    = 1<<10,  // orientations of mocap bodies
   mjSTATE_USERDATA      = 1<<11,  // user data
-  mjSTATE_MUSCLE        = 1<<12,  // compliant muscle states
-  mjSTATE_PLUGIN        = 1<<13,  // plugin state
+  mjSTATE_PLUGIN        = 1<<12,  // plugin state
 
-  mjNSTATE              = 14,     // number of state elements
+  mjNSTATE              = 13,     // number of state elements
 
   // convenience values for commonly used state specifications
   mjSTATE_PHYSICS       = mjSTATE_QPOS | mjSTATE_QVEL | mjSTATE_ACT,
@@ -221,7 +220,9 @@ struct mjData_ {
   mjtNum* qacc_warmstart;    // acceleration used for warmstart                  (nv x 1)
   mjtNum* plugin_state;      // plugin state                                     (npluginstate x 1)
   
-  // compliant muscle states (activation A is stored in act array)
+  // muscle-tendon unit OUTPUTS, refreshed every step by the equilibrium solve. Not state: the
+  // fiber length and the activation are activation variables, act = [l_ce, activation], and are
+  // therefore covered by mjSTATE_ACT.
   mjtNum* muscle_l_ce;       // contractile element length                      (nu x 1)
   mjtNum* muscle_v_ce;       // contractile element velocity                    (nu x 1)
   mjtNum* muscle_l_se;      // series elastic element length                  (nu x 1)

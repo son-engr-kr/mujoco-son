@@ -6335,8 +6335,36 @@ void mjCActuator::Compile(void) {
     throw mjCError(this, "actrange specified but dyntype is 'none' in actuator");
   }
 
+  // muscle-tendon units carry a second activation variable: the fiber length.
+  //
+  // The layout follows MuJoCo's existing convention that the LAST activation variable is the one
+  // that multiplies the gain, while earlier ones are internal state (actuator plugins already
+  // rely on it): act = [l_ce, activation]. Putting the fiber length in `act` rather than in a
+  // side array is what makes the muscle a normal MuJoCo stateful actuator -- mj_forward becomes
+  // a pure function of the state, RK4 and mjd_transitionFD integrate and difference it correctly,
+  // and mj_getState/mj_setState capture it under mjSTATE_ACT.
+  //
+  // This is set here, not asked of the user, for the same reason the <muscle> shortcut sets
+  // dyntype and gaintype: the second variable is a property of the model, not a modelling choice.
+  bool is_mtu = gaintype == mjGAIN_COMPLIANT_MTU || gaintype == mjGAIN_MILLARD_MTU ||
+                gaintype == mjGAIN_HYFYDY_MTU;
+  if (is_mtu) {
+    if (dyntype != mjDYN_MUSCLE) {
+      throw mjCError(this, "muscle-tendon gains require dyntype 'muscle' in actuator");
+    }
+    if (actdim >= 0 && actdim != 2) {
+      throw mjCError(this, "actdim is set automatically to 2 for muscle-tendon gains in actuator");
+    }
+    // actrange would clamp the fiber length as well as the activation, since a range is
+    // per-actuator rather than per-activation-variable
+    if (is_actlimited()) {
+      throw mjCError(this, "actrange is not supported for muscle-tendon gains in actuator");
+    }
+    actdim = 2;
+  }
+
   // check and set actdim
-  if (!plugin.active) {
+  if (!plugin.active && !is_mtu) {
     if (actdim > 1 && dyntype != mjDYN_USER) {
       throw mjCError(this, "actdim > 1 is only allowed for dyntype 'user' in actuator");
     }

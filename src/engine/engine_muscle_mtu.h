@@ -152,11 +152,25 @@ MJAPI int mju_millardCurveCacheSize(void);
 // lookup inside the stepping path, which costs more than the muscle solve itself.
 MJAPI void mju_mtuMuscleInit(const mjModel* m, mjData* d);
 
-// Advance one millard_mtu or hyfydy_mtu actuator by one timestep and write its state and force
-// into mjData. `act` is the activation, `len`/`vel` the MTU (path) length and velocity. Called
-// from the actuator gain switch in mj_fwdActuation.
-MJAPI void mju_mtuMuscleUpdate(const mjModel* m, mjData* d, int id,
-                               mjtNum act, mjtNum len, mjtNum vel);
+// Compute one millard_mtu or hyfydy_mtu actuator's fiber velocity into act_dot, and its force
+// and diagnostics into mjData. Called from the act_dot loop in mj_fwdActuation.
+//
+// The actuator carries TWO activation variables, act = [l_ce, activation]: MuJoCo's convention is
+// that the last one multiplies the gain while earlier ones are internal state. Keeping the fiber
+// length there rather than in a side array is what makes mj_forward a pure function of the state,
+// so RK4 integrates the fiber correctly, mjd_transitionFD differences it correctly, and
+// mj_getState/mj_setState capture it under mjSTATE_ACT.
+MJAPI void mju_mtuMuscleActDot(const mjModel* m, mjData* d, int id);
+
+// Put every millard_mtu / hyfydy_mtu fiber at its isometric equilibrium for the current pose --
+// the analogue of OpenSim's Model::equilibrateMuscles. Call after mj_forward whenever the pose
+// was set rather than integrated (a reset, a keyframe, a qpos edit).
+MJAPI void mju_mtuMuscleEquilibrate(const mjModel* m, mjData* d);
+
+// d(actuator_force)/d(actuator_velocity), for the implicit integrators. Exactly zero for a
+// compliant tendon -- the tendon force is a function of tendon LENGTH -- and nonzero only on
+// the rigid-tendon path, where the fiber velocity is the path velocity.
+MJAPI mjtNum mju_mtuMuscleForceVel(const mjModel* m, const mjData* d, int id);
 
 // One normalized Millard2012 curve at the shape parameters in `prm` (zero means default, as in
 // gainprm), and optionally its slope. Exposed so a model's curves can be checked against

@@ -5,7 +5,7 @@
     <!-- Compliant muscle default class -->
     <!-- <default class="compliant_muscle">
       <general biasprm="0" biastype="none" ctrllimited="true" ctrlrange="0 1" 
-               dynprm="0.01 0.04" dyntype="compliant_mtu" 
+               dynprm="0.01 0.04" dyntype="muscle" 
                gainprm="575.376 0.0992222 0.0575158 10.0 0.05 0.0 1.0 0.0 0.0" 
                gaintype="compliant_mtu"/>
     </default> -->

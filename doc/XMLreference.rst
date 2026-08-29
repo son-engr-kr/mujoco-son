@@ -5184,7 +5184,8 @@ specify them independently.
    ============= ===============================
 
    The three ``*_mtu`` gains are muscle-tendon units with a compliant tendon and a fiber-length
-   state. They do not follow the affine formula above: each solves its own fiber equilibrium and
+   state. They require ``dyntype="muscle"`` and carry two activation variables,
+   ``act = [fiber_length, activation]``; ``actdim`` is set to 2 by the compiler. They do not follow the affine formula above: each solves its own fiber equilibrium and
    produces the actuator force directly, with the activation entering the fiber force rather than
    multiplying a gain. ``millard_mtu`` and ``hyfydy_mtu`` take their 32 gainprm slots as a 1:1 map
    of an OpenSim or Hyfydy muscle's properties; see :doc:`muscle_mtu`.

@@ -1648,15 +1648,19 @@ void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
       mjCompliantMuscleParams params;
       mju_compliantMuscleExtractParams(m, i, &params);
       
-      // Initialize states based on Python reset function
-      // Set activation A at the actuator's mapped activation slot
+      // act = [l_ce, activation]. mj_resetData has just zeroed act, and a zero fiber length is
+      // not a physical state, so seed the fiber at its optimal length -- the model's own default,
+      // the analogue of an actuator plugin's reset callback. A keyframe applied afterwards
+      // overrides it, which is the right precedence. This does NOT equilibrate: that needs a
+      // position pass, so it is mju_compliantMuscleEquilibrate's job and the caller's choice.
       int act_first = m->actuator_actadr[i];
       int act_last = act_first + m->actuator_actnum[i] - 1;
       if (act_first >= 0 && m->actuator_actnum[i] > 0) {
-        d->act[act_last] = 0.0;  // A_init = 0 for no-excitation baseline
+        d->act[act_first] = params.l_opt;   // fiber length
+        d->act[act_last] = 0.0;             // activation: no-excitation baseline
       }
-      d->muscle_v_ce[i] = 0.0;        // v_ce = 0 (from Python: self.v_ce = 0)
-      d->muscle_F_mtu[i] = 0.0;       // F_mtu = 0 (from Python: self.F_mtu = 0)
+      d->muscle_v_ce[i] = 0.0;
+      d->muscle_F_mtu[i] = 0.0;
 
       // Validate the actuator drives a tendon.
       int tendon_id = m->actuator_trnid[2*i];
@@ -1664,54 +1668,14 @@ void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
         mju_error("Invalid tendon_id in mju_compliantMuscleInit for actuator %d", i);
       }
 
-      // Initialize the fiber at optimal length and the tendon at slack length.
-      // Both are constant model parameters, so no position/forward pass is
-      // needed here; mju_compliantMuscleUpdate re-solves l_ce on the first
-      // step via teleport detection, so this is only a sane pre-step value.
+      // Diagnostic outputs, refreshed every step by the equilibrium solve. The authoritative
+      // fiber length is the activation variable seeded above.
       d->muscle_l_ce[i] = params.l_opt;
       d->muscle_l_se[i] = params.l_slack;
 
     }
   }
 }
-
-// Not used
-// Initialize compliant muscle states with joint angles (more accurate reset)
-void mju_compliantMuscleReset(const mjModel* m, mjData* d, int actuator_id, 
-                              mjtNum phi1, mjtNum phi2) {
-  if (m->actuator_gaintype[actuator_id] != mjGAIN_COMPLIANT_MTU) {
-    return;
-  }
-  
-  // Extract muscle parameters
-  mjCompliantMuscleParams params;
-  mju_compliantMuscleExtractParams(m, actuator_id, &params);
-  
-  // Initialize states based on Python reset function (set activation at mapped slot)
-  int act_first = m->actuator_actadr[actuator_id];
-  int act_last = act_first + m->actuator_actnum[actuator_id] - 1;
-  if (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) {
-    d->act[act_last] = 0.0;
-  }
-  d->muscle_v_ce[actuator_id] = 0.0;        // v_ce = 0
-  d->muscle_F_mtu[actuator_id] = 0.0;       // F_mtu = 0
-  
-  // Use tendon length from MuJoCo tendon arrays
-  int tendon_id = m->actuator_trnid[2*actuator_id];
-  if (tendon_id < 0 || tendon_id >= m->ntendon) {
-    mju_error("Invalid tendon_id in mju_compliantMuscleReset for actuator %d", actuator_id);
-  }
-  mjtNum l_mtu = d->ten_length[tendon_id];
-  
-  // Calculate initial l_ce with minimum length constraint
-  mjtNum l_ce = mju_max(0.01, l_mtu - params.l_slack);
-  d->muscle_l_ce[actuator_id] = l_ce;
-  
-  // Calculate initial l_se
-  mjtNum l_se = l_mtu - l_ce;
-  d->muscle_l_se[actuator_id] = l_se;
-}
-
 
 // ECC (Excitation-Contraction Coupling) dynamics - compute activation derivative
 static mjtNum mju_compliantMuscleECCDerivative(mjtNum S, mjtNum A) {
@@ -1770,6 +1734,34 @@ static mjtNum mju_compliantMuscleForwardVce0(mjtNum v_ce0, mjtNum K, mjtNum N) {
 }
 
 
+// d(f_vce0)/d(v_ce0), matching mju_compliantMuscleForwardVce0 region for region. Needed only by
+// the rigid-tendon path, where the fiber velocity is the path velocity and the force-velocity
+// curve therefore enters d(actuator_force)/d(actuator_velocity) directly.
+static mjtNum mju_compliantMuscleForwardVce0Deriv(mjtNum v_ce0, mjtNum K, mjtNum N) {
+  if (v_ce0 <= 0.0) {
+    mjtNum denom = 1.0 - K*v_ce0;
+    if (denom == 0.0) {
+      denom = 1e-8;
+    }
+    return (1.0 + K)/(denom*denom);
+  }
+  if (v_ce0 <= 1.0) {
+    mjtNum denom_t = 7.56*K*v_ce0 + 1.0;
+    if (denom_t == 0.0) {
+      denom_t = 1e-8;
+    }
+    mjtNum t = (v_ce0 - 1.0)/denom_t;
+    mjtNum dt = (1.0 + 7.56*K)/(denom_t*denom_t);   // d/dv0 of (v0-1)/(7.56 K v0 + 1)
+    mjtNum denom_f = t - 1.0;
+    if (denom_f == 0.0) {
+      denom_f = -1e-8;
+    }
+    return dt/(denom_f*denom_f);                    // d/dv0 of  N - t/(t-1)
+  }
+  return 100.0;
+}
+
+
 // Rigid-tendon muscle force. For a tendon with negligible slack length the
 // series-elastic stretch is negligible against the fiber's operating range,
 // so the fiber takes the whole MTU length change: l_ce = l_mtu - l_slack and
@@ -1796,6 +1788,36 @@ static mjtNum mju_compliantMuscleRigidForce(
   if (v_ce_out) *v_ce_out = v_ce;
 
   return p->F_max * (f_pe0 + A * f_lce0 * f_vce0);
+}
+
+
+// d(actuator_force)/d(actuator_velocity) for a compliant_mtu actuator.
+//
+// ZERO for a compliant tendon, exactly: the actuator force is the TENDON force, a function of the
+// tendon's length alone, and both the path length and the fiber length are held fixed when
+// differentiating with respect to velocity. The muscle's velocity dependence is real but it is
+// mediated through the fiber state and so appears in the next step, not in this partial.
+// A rigid tendon is different -- the fiber velocity is the path velocity.
+mjtNum mju_compliantMuscleForceVel(const mjModel* m, const mjData* d, int actuator_id) {
+  mjCompliantMuscleParams p;
+  mju_compliantMuscleExtractParams(m, actuator_id, &p);
+  if (!mju_compliantMuscleIsRigid(&p)) {
+    return 0;
+  }
+
+  int fiber = m->actuator_actadr[actuator_id];
+  int activation = fiber + m->actuator_actnum[actuator_id] - 1;
+  mjtNum A = mju_clip(d->act[activation], 0, 1);
+
+  mjtNum l_mtu = d->actuator_length[actuator_id], v_mtu = d->actuator_velocity[actuator_id];
+  mjtNum l_ce = mju_max(0.001, l_mtu - p.l_slack);
+  mjtNum l_ce0 = l_ce/p.l_opt;
+  mjtNum v_ce0 = v_mtu/(p.l_opt*p.v_max);
+
+  // F = F_max*(f_pe0 + A*f_lce0*f_vce0(v0)), v0 = v_mtu/(l_opt*v_max); actuator force is -F
+  mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, p.W, p.C);
+  mjtNum dfv = mju_compliantMuscleForwardVce0Deriv(v_ce0, p.K, p.N);
+  return -p.F_max*A*f_lce0*dfv/(p.l_opt*p.v_max);
 }
 
 
@@ -2029,87 +2051,92 @@ static int mju_compliantMuscleNewtonStep(
 
 
 
-// Main compliant muscle update function (equivalent to update_inter)
-void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id, 
-                               mjtNum A, mjtNum tendon_length, mjtNum tendon_velocity) {
-  // Extract muscle parameters
+// Solve the compliant MTU equilibrium at the CURRENT state and write the muscle outputs.
+// Returns the end-of-step fiber length. `dt <= 0` asks for the isometric solve.
+//
+// Pure: it depends only on (A, l_ce, l_mtu) and the model, and it writes nothing that is state.
+// The fiber length itself is an actuator activation variable and is integrated by MuJoCo.
+static mjtNum mju_compliantMuscleSolve(const mjModel* m, mjData* d, int actuator_id,
+                                       mjtNum A, mjtNum l_ce, mjtNum l_mtu, mjtNum v_mtu,
+                                       mjtNum dt) {
   mjCompliantMuscleParams params;
   mju_compliantMuscleExtractParams(m, actuator_id, &params);
-  
-  // Get current states from correct activation slot
-  // int act_first = m->actuator_actadr[actuator_id];
-  // int act_last = act_first + m->actuator_actnum[actuator_id] - 1;
-  // mjtNum A = (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) ? d->act[act_last] : 0.0;
-  mjtNum l_ce = d->muscle_l_ce[actuator_id];
-  mjtNum v_ce = d->muscle_v_ce[actuator_id];
-  
-  // Use MuJoCo's computed tendon length directly
-  mjtNum l_mtu = tendon_length;
-  mjtNum v_mtu = tendon_velocity;
 
-  mjtNum E_REF = params.E_REF;
-
-  // Rigid-tendon fallback: muscles with a negligible free tendon (l_slack much
-  // smaller than l_opt) make the series-elastic normalization (l_se / l_slack)
-  // singular, which stalls the equilibrium solvers and yields a constant force.
-  // For these the tendon is treated as rigid: the fiber length is algebraic,
-  // no equilibrium solve and no division by l_slack. This path holds no
-  // integrated solver state, so teleport/reset detection is skipped as well.
+  // Rigid-tendon fallback: muscles with a negligible free tendon (l_slack much smaller than
+  // l_opt) make the series-elastic normalization (l_se / l_slack) singular, which stalls the
+  // equilibrium solver and yields a constant force. For these the tendon is treated as rigid:
+  // the fiber length is algebraic, with no solve and no division by l_slack.
   if (mju_compliantMuscleIsRigid(&params)) {
     mjtNum l_ce_rigid, v_ce_rigid;
-    mjtNum F_mtu = mju_compliantMuscleRigidForce(A, l_mtu, v_mtu, &params,
+    mjtNum F_mtu = mju_compliantMuscleRigidForce(A, l_mtu, dt > 0 ? v_mtu : 0, &params,
                                                  &l_ce_rigid, &v_ce_rigid);
     d->muscle_l_ce[actuator_id] = l_ce_rigid;
     d->muscle_v_ce[actuator_id] = v_ce_rigid;
     d->muscle_l_se[actuator_id] = params.l_slack;
     d->muscle_F_mtu[actuator_id] = F_mtu;
-    return;
+    return l_ce_rigid;
   }
 
-  // -- Teleport / Reset Detection --
-  // Reconstruct previous l_mtu from stored state
-  mjtNum l_mtu_prev = d->muscle_l_ce[actuator_id] + d->muscle_l_se[actuator_id];
-  mjtNum expected_change = v_mtu * m->opt.timestep;
-  mjtNum actual_change = l_mtu - l_mtu_prev;
-  
-  // Threshold: significant discontinuity
-  // We use a tight threshold (1e-4 = 0.1mm) to detect "teleportation" or 
-  // static analysis sweeps (like mj_forward called with changed qpos but no time step).
-  // If v_mtu accurately predicts the length change, error should be near zero.
-  mjtNum threshold = 1e-4; 
-
-  int is_teleport = 0;
-  if (mju_abs(actual_change - expected_change) > threshold) {
-    is_teleport = 1;
-  }
-  
-  if (is_teleport) {
-    // Solve for steady-state equilibrium (v_ce = 0)
-    mju_compliantMuscleSolveSteadyState(A, &l_ce, l_mtu, &params);
-    v_ce = 0.0;
+  mjtNum l_ce_next = l_ce, v_ce = 0;
+  if (dt > 0) {
+    mju_compliantMuscleNewtonStep(A, &l_ce_next, &v_ce, l_mtu, v_mtu, &params, dt);
   } else {
-    // Perform single integration step for the full timestep
-    mju_compliantMuscleNewtonStep(A, &l_ce, &v_ce, l_mtu, v_mtu, &params, m->opt.timestep);
+    mju_compliantMuscleSolveSteadyState(A, &l_ce_next, l_mtu, &params);
   }
 
-  // Calculate all values once (used for both logging and final state)
-  mjtNum l_se = l_mtu - l_ce;
+  mjtNum l_se = l_mtu - l_ce_next;
+  mjtNum f_se0 = mju_compliantMuscleFp0(l_se / params.l_slack, params.E_REF);
 
-  mjtNum l_se0 = l_se / params.l_slack;
-  mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
-
-  mjtNum F_mtu = params.F_max * f_se0;
-
-
-  // Note: activation is updated separately by MuJoCo's nextActivation() using act_dot,
-  // so we don't store it here to avoid overwriting the integrated value
-  // if (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) {
-  //   d->act[act_last] = A;
-  // }
-
-  // Store final states (using calculated values directly - no averaging needed)
-  d->muscle_l_ce[actuator_id] = l_ce;
+  d->muscle_l_ce[actuator_id] = l_ce_next;
   d->muscle_l_se[actuator_id] = l_se;
   d->muscle_v_ce[actuator_id] = v_ce;
-  d->muscle_F_mtu[actuator_id] = F_mtu;
+  d->muscle_F_mtu[actuator_id] = params.F_max * f_se0;
+  return l_ce_next;
+}
+
+
+// act = [l_ce, activation]: MuJoCo's convention is that the LAST activation variable multiplies
+// the gain while earlier ones are internal state. Writing the fiber velocity into act_dot[0] is
+// what turns this actuator into an ordinary MuJoCo stateful actuator -- mj_forward becomes a pure
+// function of the state, so RK4 integrates the fiber, mjd_transitionFD differences it, and
+// mj_getState captures it under mjSTATE_ACT.
+//
+// The reported fiber velocity is the IMPLICIT one, (l_ce* - l_ce)/dt with l_ce* the backward-Euler
+// solution. That keeps the unconditional stability of the implicit solve -- the tendon is stiff,
+// and at zero activation nothing but the fiber's own viscosity resists it -- while leaving
+// act_dot a genuine function of the current state. Under MuJoCo's Euler integrator act[0] lands
+// exactly on l_ce*.
+void mju_compliantMuscleActDot(const mjModel* m, mjData* d, int actuator_id) {
+  int fiber = m->actuator_actadr[actuator_id];
+  int activation = fiber + m->actuator_actnum[actuator_id] - 1;
+
+  mjtNum A = d->act[activation];
+  if (m->actuator_actearly[actuator_id]) {
+    A += m->opt.timestep * d->act_dot[activation];
+  }
+  A = mju_clip(A, 0, 1);
+
+  mjtNum l_ce = d->act[fiber];
+  mjtNum dt = m->opt.timestep;
+  mjtNum l_ce_next = mju_compliantMuscleSolve(m, d, actuator_id, A, l_ce,
+                                              d->actuator_length[actuator_id],
+                                              d->actuator_velocity[actuator_id], dt);
+  d->act_dot[fiber] = (l_ce_next - l_ce) / dt;
+}
+
+
+// Put every compliant_mtu fiber at its isometric equilibrium for the current pose. Call after
+// mj_forward whenever the pose was set rather than integrated.
+void mju_compliantMuscleEquilibrate(const mjModel* m, mjData* d) {
+  for (int i = 0; i < m->nu; i++) {
+    if (m->actuator_gaintype[i] != mjGAIN_COMPLIANT_MTU) {
+      continue;
+    }
+    int fiber = m->actuator_actadr[i];
+    int activation = fiber + m->actuator_actnum[i] - 1;
+    mjtNum A = mju_clip(d->act[activation], 0, 1);
+    d->act[fiber] = mju_compliantMuscleSolve(m, d, i, A, d->act[fiber],
+                                             d->actuator_length[i], 0, 0);
+    d->act_dot[fiber] = 0;
+  }
 }

@@ -363,6 +363,32 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
     }
   }
 
+  // Muscle-tendon units: the FIRST activation variable is the fiber length, so its act_dot is the
+  // fiber velocity. Done here rather than in the gain switch below because that is where a
+  // stateful actuator's dynamics belong -- it is what makes mj_forward a pure function of the
+  // state, and therefore what makes RK4, mjd_transitionFD and mj_getState behave.
+  //
+  // Note this also computes the muscle force (into d->muscle_F_mtu), because the force and the
+  // fiber velocity come out of the same equilibrium solve; the gain switch below just reads it.
+  for (int i=0; i < nu; i++) {
+    if (m->actuator_actadr[i] < 0 || mj_actuatorDisabled(m, i)) {
+      continue;
+    }
+    switch ((mjtGain) m->actuator_gaintype[i]) {
+    case mjGAIN_COMPLIANT_MTU:
+      mju_compliantMuscleActDot(m, d, i);
+      break;
+
+    case mjGAIN_MILLARD_MTU:
+    case mjGAIN_HYFYDY_MTU:
+      mju_mtuMuscleActDot(m, d, i);
+      break;
+
+    default:
+      break;
+    }
+  }
+
   // get act_dot from actuator plugins
   if (m->nplugin) {
     const int nslot = mjp_pluginCount();
@@ -417,38 +443,14 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
                             m->actuator_acc0[i],
                             prm);
       break;
-    case mjGAIN_COMPLIANT_MTU: {           // compliant MTU from Song
-      // Use MuJoCo's tendon arrays directly (preferred for tendon transmissions). No fallbacks.
-
-
-      // Update compliant muscle state using tendon length directly
-      mju_compliantMuscleUpdate(m, d, i, d->act[i], d->actuator_length[i], d->actuator_velocity[i]);
-      // Use the computed muscle force as gain
-      gain = d->muscle_F_mtu[i];
-      break;
-    }
-
+    case mjGAIN_COMPLIANT_MTU:             // compliant MTU from Song
     case mjGAIN_MILLARD_MTU:               // OpenSim Millard2012EquilibriumMuscle
-    case mjGAIN_HYFYDY_MTU: {              // Hyfydy muscle_force_m2012fast
-      // These solve their own fiber equilibrium and produce a force directly, so `gain` is
-      // only carried for reporting; the force is taken from muscle_F_mtu below.
-      //
-      // The activation is the actuator's LAST activation variable, the same one the
-      // gain*act path uses, so dyntype="muscle" gives Millard's first-order activation
-      // dynamics. An actuator with no activation state is driven by ctrl directly, which
-      // is what dyntype="none" means for a muscle: excitation applied without a lag.
-      mjtNum act_mtu;
-      if (m->actuator_actadr[i] == -1) {
-        act_mtu = ctrl[i];
-      } else {
-        int act_adr = m->actuator_actadr[i] + m->actuator_actnum[i] - 1;
-        act_mtu = m->actuator_actearly[i] ? nextActivation(m, d, i, act_adr, d->act_dot[act_adr])
-                                          : d->act[act_adr];
-      }
-      mju_mtuMuscleUpdate(m, d, i, act_mtu, d->actuator_length[i], d->actuator_velocity[i]);
+    case mjGAIN_HYFYDY_MTU:                // Hyfydy muscle_force_m2012fast
+      // The equilibrium was already solved in the act_dot pass above, which is where this
+      // actuator's dynamics live. `gain` is only carried for reporting; the force comes from
+      // muscle_F_mtu below.
       gain = d->muscle_F_mtu[i];
       break;
-    }
     default:                        // user gain
       if (mjcb_act_gain) {
         gain = mjcb_act_gain(m, d, i);
@@ -463,8 +465,6 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
     if ((mjtGain)m->actuator_gaintype[i] == mjGAIN_COMPLIANT_MTU ||
         (mjtGain)m->actuator_gaintype[i] == mjGAIN_MILLARD_MTU ||
         (mjtGain)m->actuator_gaintype[i] == mjGAIN_HYFYDY_MTU) {
-      // Logging is now handled inside mju_compliantMuscleUpdate
-      // Directly apply computed F_mtu as actuator force (no clipping)
       force[i] = -d->muscle_F_mtu[i];
     } else {
       if (m->actuator_actadr[i] == -1) {

@@ -26,8 +26,8 @@ with a **compliant tendon** and a fiber-length state:
        Millard et al. (2013) but replaces the Bézier splines with polynomials, so its curves
        "differ slightly from the curves used in the OpenSim implementation".
 
-All three carry the fiber length ``l_ce`` as a per-actuator state and advance it by one implicit
-(backward-Euler) step per ``mj_step``, solving
+All three carry the fiber length ``l_ce`` as an actuator **activation variable** and advance it by
+one implicit (backward-Euler) step per ``mj_step``, solving
 
 .. math::
 
@@ -43,8 +43,52 @@ tendon force :math:`F = F_{max} f_T`.
 residual, the analytic Jacobian, the pennation algebra and the solver, so switching between them
 is a one-attribute change rather than a different code path.
 
-State is exposed in :ref:`mjData` as ``muscle_l_ce``, ``muscle_l_se``, ``muscle_v_ce`` and
-``muscle_F_mtu``, each ``nu x 1``.
+.. _mtuState:
+
+State
+-----
+
+Each of these actuators has **two activation variables**, ``act = [l_ce, activation]``. MuJoCo's
+convention is that the *last* activation variable is the one that multiplies the gain while
+earlier ones are internal state — the same convention actuator plugins use — so the fiber length
+sits first and the activation last. The compiler sets ``actdim`` to 2 automatically; ``dyntype``
+must be ``"muscle"``, and ``actrange`` is rejected because a range is per-actuator and would clamp
+the fiber length along with the activation.
+
+Keeping the fiber in ``act`` rather than in a side array is what makes these ordinary MuJoCo
+stateful actuators:
+
+* ``mj_forward`` is a pure function of the state, so calling it twice changes nothing, and
+  ``mjd_transitionFD`` differences the right thing.
+* every integrator works, including ``RK4``, which evaluates ``mj_forward`` at intermediate states.
+* ``mj_getState`` / ``mj_setState`` capture the muscle under ``mjSTATE_ACT``, so
+  ``mjSTATE_PHYSICS`` is a complete state and a rollout can be restored exactly.
+
+``mjData.muscle_l_ce``, ``muscle_l_se``, ``muscle_v_ce`` and ``muscle_F_mtu`` (each ``nu x 1``)
+are **outputs**, refreshed by the equilibrium solve every step, in the same sense as
+``actuator_force``. They are not state and are not part of any ``mjtState`` element.
+
+.. _mtuEquilibration:
+
+Equilibration
+-------------
+
+``mj_resetData`` seeds the fiber at ``optimal_fiber_length``, which is a valid state but not the
+one the pose implies. To start from the pose's isometric equilibrium — OpenSim's
+``Model::equilibrateMuscles`` — call:
+
+.. code-block:: c
+
+   mj_forward(m, d);                  // fills actuator_length
+   mju_mtuMuscleEquilibrate(m, d);    // or mju_compliantMuscleEquilibrate for compliant_mtu
+   mj_forward(m, d);
+
+Do this whenever the pose was **set** rather than integrated: after a reset, after loading a
+keyframe, after editing ``qpos``. Without it the first step simply takes one bounded fiber
+excursion to recover; nothing becomes unstable, the initial force is just not the equilibrium one.
+
+A keyframe that stores ``act`` restores the fiber length along with the activation, so a keyframe
+captured from a running simulation needs no equilibration.
 
 .. _mtuParameters:
 
@@ -153,10 +197,12 @@ Notes on individual parameters:
    from zero. It is a well-posedness condition, not a decoration. It is also what lets an inactive
    muscle be a damper: the term is not scaled by activation.
 
-Activation dynamics are MuJoCo's own: set ``dyntype="muscle"`` with
+Activation dynamics are MuJoCo's own: ``dyntype="muscle"`` is **required**, with
 ``dynprm="<activation_time_constant> <deactivation_time_constant>"`` (OpenSim's defaults are
-0.01 and 0.04). An actuator with no activation state is driven by ``ctrl`` directly, which is what
-``dyntype="none"`` means for a muscle: excitation applied without a lag.
+0.01 and 0.04). To approximate OpenSim's ``ignore_activation_dynamics``, use small time constants.
+
+OpenSim's ``minimum_activation`` (default 0.01) is not a separate parameter here; set
+``ctrlrange="0.01 1"`` to reproduce it, which is what OpenSim's own ``min_control`` does.
 
 .. code-block:: xml
 
@@ -229,11 +275,26 @@ The Hyfydy manual documents no rigid-tendon variant — its tendon is always the
 formulation. It exists so a short-tendon muscle degrades gracefully rather than stalling the
 solver; a model that cares about Hyfydy parity should not be in this regime.
 
-**Re-seeding after a reset or a teleport.** If the path length moved by something other than what
-the reported path velocity predicts, the state was not reached by integration (a reset, a ``qpos``
-edit, a static sweep) and there is no meaningful previous fiber length to difference against. The
-muscle re-seeds from the isometric equilibrium instead of letting a phantom fiber velocity drive
-the force.
+**The reported fiber velocity is the implicit one.** ``act_dot`` for the fiber is
+``(l_ce* - l_ce)/dt``, where ``l_ce*`` is the backward-Euler solution — not the instantaneous
+fiber velocity that solves the equilibrium at the current fiber length.
+
+The instantaneous form is what OpenSim integrates, and it is stiff: linearised,
+``d(v_ce)/d(l_ce)`` is (tendon stiffness)/(``a f_L f_V' + beta``) in fiber units, and at zero
+activation the denominator is ``beta`` alone. For a typical muscle that is ~2800 1/s, so explicit
+integration would need ``dt < 0.7 ms``, and less for a short tendon — an *inactive* muscle is the
+stiff one, which is why OpenSim uses adaptive-step integrators. Reporting the backward-Euler step
+as a velocity keeps the unconditional stability of an implicit solve while leaving ``act_dot`` a
+genuine function of the current state, which is what ``mj_forward``'s purity requires. It is
+consistent: ``(l_ce* - l_ce)/dt`` is the backward-Euler estimate of ``v_ce`` and converges to it
+as ``dt -> 0``. Under MuJoCo's Euler integrator ``act`` lands exactly on ``l_ce*``.
+
+**Implicit integrators.** ``d(actuator_force)/d(actuator_velocity)`` is exactly **zero** for a
+compliant tendon, and that is not an omission: the actuator force is the *tendon* force, a
+function of tendon length, so at fixed path length and fixed fiber length it does not depend on
+velocity at all. The muscle's velocity dependence is real but is mediated through the fiber state,
+and so appears in the next step. On the rigid-tendon path the fiber velocity *is* the path
+velocity, and there the derivative is nonzero and is supplied to ``mjd_actuator_vel``.
 
 **Smoothness.** The Millard force is a C1 function of the path length, which is what makes the
 muscle usable under finite-difference derivatives. The Hyfydy force is only C0 where the fiber
