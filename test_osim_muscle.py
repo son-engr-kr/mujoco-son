@@ -18,7 +18,8 @@ FMAX, LOPT, LSLACK, VMAX, PENNATION, BETA, TOL = range(7)
 AFL_MIN, AFL_TRANS, AFL_MAX, AFL_SLOPE = 8, 9, 10, 11
 PFL_E0, PFL_E1, PFL_KLOW, PFL_KISO, PFL_CURV = 14, 15, 16, 17, 18
 TFL_E1, TFL_KISO, TFL_FTOE, TFL_CURV = 20, 21, 22, 23
-FV_FMAXE = 24
+(FV_FMAXE, FV_DYDXC, FV_DYDXNEARC, FV_DYDXISO,
+ FV_DYDXE, FV_DYDXNEARE, FV_CONCCURV, FV_ECCCURV) = range(24, 32)
 
 _MODELS = ('millard_mtu', 'hyfydy_mtu')
 _DT = 0.001
@@ -26,11 +27,13 @@ _LOAD_MASS = 20.0
 _HANG = 0.30          # anchor height, so the path length at qpos=0 is 0.30 m
 
 
-def _gainprm(**kwargs):
+def _gainprm(overrides=None):
+    """A default muscle, with `overrides` a {slot: value} dict. Slots are ints, so this takes a
+    dict rather than keyword arguments."""
     prm = [0.0]*32
     prm[FMAX], prm[LOPT], prm[LSLACK] = 3000.0, 0.15, 0.15
     prm[VMAX], prm[PENNATION], prm[BETA] = 10.0, 0.15, 0.1
-    for slot, value in kwargs.items():
+    for slot, value in (overrides or {}).items():
         prm[slot] = value
     return ' '.join(repr(v) for v in prm)
 
@@ -183,7 +186,7 @@ def test_reset_is_repeatable(gaintype):
 def test_rigid_tendon_fallback():
     """A tendon far shorter than the fiber switches to the rigid path and still holds."""
     for gaintype in _MODELS:
-        _, data = _settle(gaintype, _gainprm(**{LSLACK: 0.005}), 0.5)
+        _, data = _settle(gaintype, _gainprm({LSLACK: 0.005}), 0.5)
         assert data.muscle_F_mtu[0] == pytest.approx(_LOAD_MASS*9.81, abs=1e-1)
         assert data.muscle_l_se[0] == pytest.approx(0.005)
 
@@ -193,8 +196,8 @@ def test_rigid_tendon_fallback():
 
 def test_tendon_strain_override_changes_compliance():
     """A more compliant tendon (larger strain_at_one_norm_force) must stretch further."""
-    _, stiff = _settle('millard_mtu', _gainprm(**{TFL_E1: 0.033}), 0.5)
-    _, soft = _settle('millard_mtu', _gainprm(**{TFL_E1: 0.10}), 0.5)
+    _, stiff = _settle('millard_mtu', _gainprm({TFL_E1: 0.033}), 0.5)
+    _, soft = _settle('millard_mtu', _gainprm({TFL_E1: 0.10}), 0.5)
     # same load, so the same tendon force, reached at a larger tendon length
     assert soft.muscle_F_mtu[0] == pytest.approx(stiff.muscle_F_mtu[0], abs=1e-2)
     assert soft.muscle_l_se[0] > stiff.muscle_l_se[0]
@@ -207,7 +210,7 @@ def test_passive_curve_override_changes_passive_force():
     length, so a fully inactive muscle sits at a shorter fiber for the same load.
     """
     default = _gainprm()
-    tuned = _gainprm(**{PFL_E0: -0.18444538749, PFL_E1: 0.50595953637, PFL_KISO: 2.896858})
+    tuned = _gainprm({PFL_E0: -0.18444538749, PFL_E1: 0.50595953637, PFL_KISO: 2.896858})
     _, a = _settle('millard_mtu', default, 0.0)
     _, b = _settle('millard_mtu', tuned, 0.0)
     assert a.muscle_F_mtu[0] == pytest.approx(b.muscle_F_mtu[0], abs=1e-2)
@@ -216,11 +219,12 @@ def test_passive_curve_override_changes_passive_force():
 
 def test_zero_means_opensim_default():
     """Writing OpenSim's defaults out explicitly must change nothing."""
-    explicit = _gainprm(**{
+    explicit = _gainprm({
         AFL_MIN: 0.4441, AFL_TRANS: 0.73, AFL_MAX: 1.8123, AFL_SLOPE: 0.8616,
         PFL_E1: 0.7, PFL_KLOW: 0.2, PFL_KISO: 2.0/0.7, PFL_CURV: 0.75,
         TFL_E1: 0.049, TFL_KISO: 1.375/0.049, TFL_FTOE: 2.0/3.0, TFL_CURV: 0.5,
-        FV_FMAXE: 1.4, 26: 0.25, 27: 5.0, 29: 0.15, 30: 0.6, 31: 0.9})
+        FV_FMAXE: 1.4, FV_DYDXNEARC: 0.25, FV_DYDXISO: 5.0,
+        FV_DYDXNEARE: 0.15, FV_CONCCURV: 0.6, FV_ECCCURV: 0.9})
     _, a = _settle('millard_mtu', _gainprm(), 0.6, steps=2000)
     _, b = _settle('millard_mtu', explicit, 0.6, steps=2000)
     assert b.qpos[0] == pytest.approx(a.qpos[0], abs=1e-12)
@@ -231,4 +235,4 @@ def test_hyfydy_rejects_curve_shape_parameters():
     """Hyfydy's curves are fixed polynomials, so a shape parameter is a modelling mistake."""
     with pytest.raises(ValueError, match='fixed polynomials'):
         mujoco.MjModel.from_xml_string(
-            _model_xml('hyfydy_mtu', _gainprm(**{PFL_E1: 0.3})))
+            _model_xml('hyfydy_mtu', _gainprm({PFL_E1: 0.3})))

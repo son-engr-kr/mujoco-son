@@ -78,8 +78,13 @@ def test_compliant_muscle():
         len_r[i] = data.sensordata[1]  # tendon_r length
         frc_c[i] = data.sensordata[2]  # compliant_muscle_c force
         frc_r[i] = data.sensordata[3]  # standard_muscle_r force
-        act_c[i] = data.act[0] if len(data.act) > 0 else 0  # activation
-        act_r[i] = data.act[1] if len(data.act) > 1 else 0
+        # act layout: the compliant_mtu actuator carries two activation variables,
+        # [fiber_length, activation], so its activation is the LAST of its own slots.
+        # The standard muscle that follows it has a single one.
+        c_adr = model.actuator_actadr[0] + model.actuator_actnum[0] - 1
+        r_adr = model.actuator_actadr[1] + model.actuator_actnum[1] - 1
+        act_c[i] = data.act[c_adr] if c_adr >= 0 else 0
+        act_r[i] = data.act[r_adr] if r_adr >= 0 else 0
         
         # Print progress
         if i % 100 == 0:
