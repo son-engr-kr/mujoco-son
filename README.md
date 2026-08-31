@@ -2,8 +2,14 @@
   <a href="#"><img alt="MuJoCo" src="banner.png" width="100%"/></a>
 </h1>
 
-> This is **mujoco-son**, a fork of upstream MuJoCo with a compliant-tendon
-> muscle model added. See [for_develop.md](for_develop.md) for build details.
+> This is **mujoco-son**, a fork of upstream MuJoCo with three compliant-tendon
+> muscle-tendon actuators added — `compliant_mtu` (Song), `millard_mtu` (OpenSim
+> `Millard2012EquilibriumMuscle`) and `hyfydy_mtu` (Hyfydy `muscle_force_m2012fast`).
+> Their parameters map 1:1 onto the source models' own properties, so a `.osim` or
+> `.hfd` muscle transfers without refitting. See
+> [doc/muscle_mtu.rst](doc/muscle_mtu.rst) for the model and the parameter table,
+> [CHANGELOG-son.md](CHANGELOG-son.md) for what changed between fork releases, and
+> [for_develop.md](for_develop.md) for build details.
 
 ## Install (mujoco-son)
 
@@ -15,13 +21,13 @@ needs to be bumped between releases.
 
 ```bash
 # Linux x86_64 (glibc >= 2.35 — Ubuntu 22.04+, Debian 12+, recent Fedora/RHEL)
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son3.0/mujoco-3.3.3+son3.0-cp311-cp311-linux_x86_64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0/mujoco-3.3.3+son4.0-cp311-cp311-linux_x86_64.whl
 
 # macOS Apple Silicon (M1/M2/M3/M4, macOS 11+)
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son3.0/mujoco-3.3.3+son3.0-cp311-cp311-macosx_11_0_arm64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0/mujoco-3.3.3+son4.0-cp311-cp311-macosx_11_0_arm64.whl
 
 # Windows x86_64
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son3.0/mujoco-3.3.3+son3.0-cp311-cp311-win_amd64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0/mujoco-3.3.3+son4.0-cp311-cp311-win_amd64.whl
 ```
 
 For Python versions other than 3.11, build from the sdist

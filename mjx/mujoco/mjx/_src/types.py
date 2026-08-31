@@ -292,7 +292,9 @@ class GainType(enum.IntEnum):
   FIXED = mujoco.mjtGain.mjGAIN_FIXED
   AFFINE = mujoco.mjtGain.mjGAIN_AFFINE
   MUSCLE = mujoco.mjtGain.mjGAIN_MUSCLE
-  # unsupported: USER
+  # unsupported: USER, COMPLIANT_MTU, MILLARD_MTU, HYFYDY_MTU. The muscle-tendon
+  # units solve a per-actuator scalar Newton with a data-dependent trip count,
+  # which is not what MJX is for; put_model raises NotImplementedError on them.
 
 
 class BiasType(enum.IntEnum):
