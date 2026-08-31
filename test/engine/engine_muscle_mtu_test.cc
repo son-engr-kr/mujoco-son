@@ -794,6 +794,175 @@ TEST_F(MuscleMtuTest, EquilibrateSolvesTheIsometricEquilibrium) {
 }
 
 
+// ------------------------------------------------------------------------------------------
+// Regimes the ordinary tests never enter.
+
+// Fixed-width pennation puts a floor under the fiber: below h/sin(phi_max) the angle would
+// exceed phi_max and 1/sqrt(1-(h/l_ce)^2) diverges. For a muscle pennated past ~26 degrees that
+// floor is what sets lce_min, rather than the active curve's left foot, so this is the case where
+// the pennation part of the clamp is load-bearing.
+//
+// Because lce_min >= h/sin(phi_max) and every evaluation is clamped to it, sin(phi) = h/l_ce can
+// never exceed sin(phi_max): the clamp is what makes the guard inside the residual unreachable.
+// That is the property under test here, and it is checked where it actually binds -- with a fiber
+// length written straight into act, which a keyframe or a user edit can now do.
+TEST_F(MuscleMtuTest, HeavilyPennatedMuscleStaysOnTheRightSideOfPhiMax) {
+  // phi_opt = 30 deg: sin(30 deg)/sin(acos(0.1)) = 0.5025 > 0.4441, so h/sin(phi_max) wins
+  const double phi_opt = 0.5235987755982988;
+  const double l_opt = 0.15;
+  const double h = l_opt*std::sin(phi_opt);
+  const double lce_min = h/0.9949874371066201;
+  EXPECT_GT(lce_min, 0.4441*l_opt);   // the pennation floor, not the active curve's, is binding
+
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    mjModel* model = LoadModelFromString(
+        HangingMuscle(gain, "3000 0.15 0.15 10 0.5235987755982988 0.1"));
+    ASSERT_THAT(model, ::testing::NotNull()) << gain;
+    mjData* data = mj_makeData(model);
+
+    // (1) a fiber length below the floor -- including one below h itself, where the pennation
+    // term would be imaginary -- must come back clamped, at exactly cos(phi_max) = 0.1
+    for (double bad : {1e-9, 0.5*h, h, 0.99*lce_min}) {
+      mj_resetData(model, data);
+      data->qpos[0] = 0.0;
+      data->act[0] = bad;
+      data->act[1] = 0.5;
+      data->ctrl[0] = 0.5;
+      mj_forward(model, data);
+
+      double l_ce = data->muscle_l_ce[0];
+      ASSERT_TRUE(std::isfinite(l_ce)) << gain << " from act[0]=" << bad;
+      ASSERT_TRUE(std::isfinite(data->muscle_F_mtu[0])) << gain << " from act[0]=" << bad;
+      EXPECT_GE(l_ce, lce_min - 1e-12) << gain << " from act[0]=" << bad;
+      double cos_phi = std::sqrt(1 - (h/l_ce)*(h/l_ce));
+      EXPECT_GE(cos_phi, 0.1 - 1e-9) << gain << " from act[0]=" << bad;
+    }
+
+    // and stepping from there must recover rather than blow up
+    mj_resetData(model, data);
+    data->act[0] = 1e-6;
+    data->act[1] = 0.5;
+    data->ctrl[0] = 0.5;
+    for (int i = 0; i < 50; i++) {
+      mj_step(model, data);
+      ASSERT_TRUE(std::isfinite(data->act[0])) << gain << " at step " << i;
+      ASSERT_TRUE(std::isfinite(data->muscle_F_mtu[0])) << gain << " at step " << i;
+    }
+    EXPECT_GE(data->act[0], lce_min - 1e-9) << gain;   // pulled back into the valid range
+
+    // (2) a whole path sweep: the geometry must close and cos(phi) stay above cos(phi_max)
+    for (int i = 0; i <= 140; i++) {
+      mj_resetData(model, data);
+      data->qpos[0] = 0.001*i;
+      data->act[1] = 1.0;
+      data->ctrl[0] = 1.0;
+      mj_forward(model, data);
+      mju_mtuMuscleEquilibrate(model, data);
+      mj_forward(model, data);
+
+      double l_ce = data->muscle_l_ce[0];
+      ASSERT_TRUE(std::isfinite(l_ce)) << gain << " at qpos " << data->qpos[0];
+      EXPECT_GE(l_ce, lce_min - 1e-12) << gain << " at qpos " << data->qpos[0];
+      double cos_phi = std::sqrt(1 - (h/l_ce)*(h/l_ce));
+      EXPECT_GE(cos_phi, 0.1 - 1e-9) << gain;
+      EXPECT_THAT(l_ce*cos_phi + data->muscle_l_se[0],
+                  DoubleNear(data->actuator_length[0], 1e-12)) << gain;
+    }
+
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
+}
+
+
+// Outside |v0| <= 1 the damped Millard force-velocity curve extrapolates FLAT, so it contributes
+// nothing to dR/dl_ce there and the fiber's velocity term is carried by the damping alone. That
+// is the regime the fiber damping is a well-posedness condition for, and nothing else in the
+// suite reaches it: v0 = v_ce/(v_max*l_opt) needs |v_ce| > 1.5 m/s at these parameters.
+TEST_F(MuscleMtuTest, SolveConvergesBeyondTheForceVelocityDomain) {
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    // beta = 0.1 (default) and beta = 0 (asked for with a negative value)
+    for (const char* prm : {"3000 0.15 0.15 10 0.15 0.1", "3000 0.15 0.15 10 0.15 -1"}) {
+      mjModel* model = LoadModelFromString(HangingMuscle(gain, prm));
+      ASSERT_THAT(model, ::testing::NotNull()) << gain;
+      mjData* data = mj_makeData(model);
+      data->ctrl[0] = 0.8;
+      data->act[1] = 0.8;
+      mj_forward(model, data);
+      mju_mtuMuscleEquilibrate(model, data);
+
+      // displace the fiber far enough that one implicit step has to move it fast
+      double reached = 0;
+      for (double push : {0.7, 0.8, 1.2, 1.4}) {
+        double eq = data->muscle_l_ce[0];
+        data->act[0] = eq*push;
+        mj_forward(model, data);
+
+        double v0 = data->muscle_v_ce[0]/(10*0.15);   // v_max*l_opt
+        reached = std::fmax(reached, std::fabs(v0));
+        EXPECT_TRUE(std::isfinite(data->muscle_F_mtu[0])) << gain << " " << prm;
+        EXPECT_LT(std::fabs(Residual(model, data, 0, gain[0] == 'h', 0.8)), 1e-6)
+            << gain << " " << prm << " at push " << push;
+        data->act[0] = eq;
+      }
+      EXPECT_GT(reached, 1.0) << gain << " " << prm << ": never left the F-V domain";
+
+      mj_deleteData(data);
+      mj_deleteModel(model);
+    }
+  }
+}
+
+
+// The velocity derivative handed to the implicit integrators has to be the real one. Checked
+// against a central difference of the actuator force with respect to the actuator velocity --
+// both for the rigid-tendon path, where it is nonzero, and the compliant one, where the claim is
+// that it is exactly zero.
+TEST_F(MuscleMtuTest, ForceVelocityDerivativeMatchesFiniteDifference) {
+  struct Case { const char* gain; const char* prm; bool rigid; };
+  const Case cases[] = {
+      {"millard_mtu", "3000 0.15 0.005 10 0.15 0.1", true},
+      {"hyfydy_mtu",  "3000 0.15 0.005 10 0.15 0.1", true},
+      {"millard_mtu", "3000 0.15 0.15 10 0.15 0.1",  false},
+      {"hyfydy_mtu",  "3000 0.15 0.15 10 0.15 0.1",  false}};
+
+  for (const Case& c : cases) {
+    mjModel* model = LoadModelFromString(HangingMuscle(c.gain, c.prm));
+    ASSERT_THAT(model, ::testing::NotNull()) << c.gain;
+    mjData* data = mj_makeData(model);
+
+    auto force_at = [&](double qvel) {
+      data->qpos[0] = 0.02;
+      data->qvel[0] = qvel;
+      data->act[1] = 0.6;
+      data->ctrl[0] = 0.6;
+      mj_forward(model, data);
+      mju_mtuMuscleEquilibrate(model, data);
+      mj_forward(model, data);
+      return data->actuator_force[0];
+    };
+
+    const double h = 1e-4;
+    double f_plus = force_at(h), v_plus = data->actuator_velocity[0];
+    double f_minus = force_at(-h), v_minus = data->actuator_velocity[0];
+    force_at(0.0);
+    double analytic = mju_mtuMuscleForceVel(model, data, 0);
+    double fd = (f_plus - f_minus)/(v_plus - v_minus);
+
+    if (c.rigid) {
+      EXPECT_GT(std::fabs(analytic), 1.0) << c.gain << ": rigid tendon must depend on velocity";
+      EXPECT_NEAR(analytic, fd, 1e-4*std::fabs(analytic)) << c.gain << " rigid";
+    } else {
+      EXPECT_EQ(analytic, 0.0) << c.gain << ": compliant tendon force is a function of length";
+      EXPECT_NEAR(fd, 0.0, 1e-9) << c.gain << " compliant";
+    }
+
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
+}
+
+
 // Hyfydy's curves have no per-muscle shape, so a shape parameter set on a hyfydy_mtu actuator
 // is a modelling mistake and must be rejected rather than silently ignored.
 TEST_F(MuscleMtuTest, HyfydyRejectsCurveShapeParameters) {

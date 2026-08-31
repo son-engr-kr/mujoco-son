@@ -460,7 +460,10 @@ static void mtuEval(mjMtuEval* e, mjtNum l_ce, mjtNum l_mtu, mjtNum l_ce_prev,
   if (p->pen_h > 0) {
     mjtNum sp = p->pen_h/l_ce;
     if (sp > mjMTU_SINPHIMAX) {
-      sp = mjMTU_SINPHIMAX;                 // clamp active: phi is frozen, so dphi stays 0
+      // GUARD, not live logic: lce_min >= pen_h/sin(phi_max) and every evaluation is clamped to
+      // lce_min, so sin(phi) = pen_h/l_ce cannot exceed sin(phi_max). It stays because a caller
+      // can write any fiber length into act, and 1/sqrt(1-sp^2) is imaginary past this point.
+      sp = mjMTU_SINPHIMAX;                 // phi frozen at phi_max, so dphi stays 0
     } else {
       mjtNum r = 1 - sp*sp;
       e->dphi = -(sp/l_ce)/(r > 0 ? mju_sqrt(r) : 1);
