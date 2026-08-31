@@ -239,11 +239,22 @@ difference is left standing and stated here instead.
 its default; it is not serialized per muscle in a ``.osim``. Hardcoding the default is therefore
 faithful for any model that comes through that route.
 
-**Not verified against a running OpenSim.** What has been checked is that the curve machinery
-matches upstream: the Bezier evaluator is compared against OpenSim's own expanded polynomials, and
-the curves are held to the keypoint, C2-continuity and monotonicity criteria from
-``testSmoothSegmentedFunctionFactory.cpp``. An end-to-end force comparison against a running
-OpenSim has not been done.
+**What is checked against OpenSim, and what is not.** The four normalized curves are compared
+against OpenSim's own output: ``tools/opensim_curve_dump.cpp`` compiles
+``SmoothSegmentedFunctionFactory``, ``SmoothSegmentedFunction`` and
+``SegmentedQuinticBezierToolkit`` straight from the opensim-core sources and samples them into
+``test/engine/testdata/millard_opensim_reference.csv``, which
+``MuscleMtuTest.CurvesMatchOpenSimReference`` reads. Agreement is within ``2.1e-9`` in normalized
+force and ``4.3e-6`` in slope, across the domain and outside it — which is the baked table's own
+interpolation error, so the port itself contributes nothing measurable.
+
+What has **not** been run is OpenSim's whole-muscle force, i.e. its own
+``estimateMuscleFiberState`` solving the fiber equilibrium at a given state. That call needs a
+constructed ``Millard2012EquilibriumMuscle``, which pulls in OpenSim's Object and Component
+framework, where the curves need only SimTK. The equilibrium assembly on top of the curves — the
+fixed-width pennation algebra, the force expression and the rigid-tendon rules — was instead
+transcribed from ``Millard2012EquilibriumMuscle.cpp`` and ``MuscleFixedWidthPennationModel.cpp``
+line by line, and is covered by the residual, geometry and static-load tests.
 
 .. _mtuCurves:
 

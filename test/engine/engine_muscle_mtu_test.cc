@@ -20,7 +20,10 @@
 
 #include <array>
 #include <cmath>
+#include <fstream>
 #include <limits>
+#include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -348,6 +351,55 @@ TEST_F(MuscleMtuTest, CurvesAreMonotonicWhereRequired) {
       prev = y;
       EXPECT_GE(f.Slope(x), -1e-9) << "curve " << c << " has negative slope at x=" << x;
     }
+  }
+}
+
+
+// THE reference test: OpenSim's own factory and evaluator, compiled from the opensim-core
+// sources and sampled into test/engine/testdata/millard_opensim_reference.csv (see
+// tools/opensim_curve_dump.cpp). Everything else in this file checks the port against pieces of
+// upstream or against upstream's stated criteria; this checks the whole curve against the number
+// OpenSim actually produces, including outside the domain where the curves extrapolate.
+//
+// The tolerances are the baked table's own interpolation error, which is what should be left once
+// the port is right: below 1e-8 in normalized force and 1e-5 in slope.
+TEST_F(MuscleMtuTest, CurvesMatchOpenSimReference) {
+  std::ifstream in("engine/testdata/millard_opensim_reference.csv");
+  ASSERT_TRUE(in.good()) << "reference data missing";
+
+  std::string line;
+  ASSERT_TRUE(std::getline(in, line));                 // header
+  EXPECT_EQ(line, "curve,x,y,dydx");
+
+  const std::map<std::string, int> curve_of = {{"afl", mjMUSCLECURVE_ACTIVE_FL},
+                                               {"pfl", mjMUSCLECURVE_PASSIVE_FL},
+                                               {"tfl", mjMUSCLECURVE_TENDON_FL},
+                                               {"fv", mjMUSCLECURVE_FV}};
+  std::map<int, int> counted;
+  double worst_y = 0, worst_d = 0;
+  while (std::getline(in, line)) {
+    std::stringstream ss(line);
+    std::string name, sx, sy, sd;
+    ASSERT_TRUE(std::getline(ss, name, ','));
+    ASSERT_TRUE(std::getline(ss, sx, ','));
+    ASSERT_TRUE(std::getline(ss, sy, ','));
+    ASSERT_TRUE(std::getline(ss, sd, ','));
+    auto it = curve_of.find(name);
+    ASSERT_NE(it, curve_of.end()) << "unknown curve " << name;
+
+    double x = std::stod(sx), y = std::stod(sy), d = std::stod(sd);
+    mjtNum got_d;
+    double got_y = mju_millardCurve(it->second, x, nullptr, &got_d);
+    worst_y = std::fmax(worst_y, std::fabs(got_y - y));
+    worst_d = std::fmax(worst_d, std::fabs(got_d - d));
+    counted[it->second]++;
+  }
+
+  EXPECT_LT(worst_y, 1e-8);
+  EXPECT_LT(worst_d, 1e-5);
+  // every curve must actually have been compared
+  for (int c = 0; c < mjNMUSCLECURVE; c++) {
+    EXPECT_GT(counted[c], 500) << "curve " << c << " under-sampled in the reference";
   }
 }
 

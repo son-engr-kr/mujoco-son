@@ -86,12 +86,20 @@ mirroring OpenSim's `Model::equilibrateMuscles`.
 26 C++ tests (`test/engine/engine_muscle_mtu_test.cc`) and 49 Python tests
 (`test_osim_muscle.py`, `test_compliant_muscle_smoothness.py`).
 
-What is verified: the Bézier evaluator matches OpenSim's own expanded polynomials to 1e-14
-relative; the curves meet the keypoint, C2-continuity and monotonicity criteria from OpenSim's
-`testSmoothSegmentedFunctionFactory.cpp`; the baked table reproduces the exact curve to below
-1e-7; the analytic Jacobian shows quadratic Newton convergence; the equilibrium residual stays
-below 1e-6 during motion.
+The curves are checked against **OpenSim itself**: `tools/opensim_curve_dump.cpp` compiles
+`SmoothSegmentedFunctionFactory`, `SmoothSegmentedFunction` and `SegmentedQuinticBezierToolkit`
+straight from the opensim-core sources — they need SimTK alone, not OpenSim's Object framework —
+and samples them into `test/engine/testdata/millard_opensim_reference.csv`. Agreement is within
+**2.1e-9** in normalized force and **4.3e-6** in slope, which is the baked table's own
+interpolation error.
 
-What is **not** verified: an end-to-end force comparison against a running OpenSim. The
-deliberate differences from the source models are listed in
+Also verified: the Bézier evaluator matches OpenSim's expanded polynomials to 1e-14 relative; the
+curves meet the keypoint, C2-continuity and monotonicity criteria from OpenSim's
+`testSmoothSegmentedFunctionFactory.cpp`; the analytic Jacobian shows quadratic Newton
+convergence; the equilibrium residual stays below 1e-6 during motion.
+
+Not run: OpenSim's whole-muscle `estimateMuscleFiberState`, which needs a constructed
+`Millard2012EquilibriumMuscle` and therefore OpenSim's Object and Component framework. The
+equilibrium assembly on top of the curves was transcribed from the source line by line instead.
+The deliberate differences from the source models are listed in
 [doc/muscle_mtu.rst](doc/muscle_mtu.rst#deliberate-differences-from-the-source-models).
