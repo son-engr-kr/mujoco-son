@@ -50,7 +50,7 @@ enum {
   mjMTU_PENNATION,    // pennation_angle_at_optimal                       [rad]
   mjMTU_BETA,         // fiber_damping                                    default 0.1
   mjMTU_TOL,          // fiber Newton residual tolerance                  default 1e-9
-  mjMTU_RESERVED7,
+  mjMTU_MINACT,       // minimum_activation                               default 0.01
 
   // --- OpenSim ActiveForceLengthCurve, millard_mtu only --------------------------------------
   mjMTU_AFL_MIN = 8,  // min_norm_active_fiber_length                     default 0.4441

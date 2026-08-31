@@ -532,6 +532,10 @@ double Residual(const mjModel* m, const mjData* d, int id, bool hyfydy,
   double xT = d->muscle_l_se[id]/l_slack;
   double A = act >= 0 ? act
                       : d->act[m->actuator_actadr[id] + m->actuator_actnum[id] - 1];
+  // the solve clamps the activation to [minimum_activation, 1], as OpenSim does wherever it
+  // builds a force; the reconstruction has to use the same value
+  double min_act = p[mjMTU_MINACT] == 0 ? 0.01 : (p[mjMTU_MINACT] < 0 ? 0 : p[mjMTU_MINACT]);
+  A = A < min_act ? min_act : (A > 1 ? 1 : A);
 
   auto curve = [&](int c, double x) {
     return hyfydy ? mju_hyfydyCurve(c, x, nullptr) : mju_millardCurve(c, x, p, nullptr);
@@ -668,7 +672,9 @@ TEST_F(MuscleMtuTest, RigidTendonFallback) {
     data->ctrl[0] = 0.5;
     for (int i = 0; i < 6000; i++) mj_step(model, data);
     EXPECT_THAT(data->muscle_F_mtu[0], DoubleNear(20.0*9.81, 1e-1)) << gain;
-    EXPECT_EQ(data->muscle_l_se[0], 0.005) << gain;
+    // a rigid tendon reports its real length, l_MTU - l_ce cos(phi), which sits at the slack
+    // length whenever the fiber is not on its clamp
+    EXPECT_THAT(data->muscle_l_se[0], DoubleNear(0.005, 1e-12)) << gain;
     mj_deleteData(data);
     mj_deleteModel(model);
   }
@@ -956,6 +962,75 @@ TEST_F(MuscleMtuTest, ForceVelocityDerivativeMatchesFiniteDifference) {
       EXPECT_EQ(analytic, 0.0) << c.gain << ": compliant tendon force is a function of length";
       EXPECT_NEAR(fd, 0.0, 1e-9) << c.gain << " compliant";
     }
+
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
+}
+
+
+// OpenSim clamps the activation to [minimum_activation, 1] wherever it builds a force, and
+// defaults that floor to 0.01, so a Millard muscle never fully switches off. Writing the default
+// out explicitly must change nothing, and asking for a true zero must be possible.
+TEST_F(MuscleMtuTest, MinimumActivationFloorsTheActiveForce) {
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    //                                    F_max l_opt l_slack v_max phi  beta  tol  min_act
+    mjModel* def = LoadModelFromString(HangingMuscle(gain, "3000 0.15 0.15 10 0.15 0.1"));
+    mjModel* exp = LoadModelFromString(HangingMuscle(gain, "3000 0.15 0.15 10 0.15 0.1 0 0.01"));
+    mjModel* off = LoadModelFromString(HangingMuscle(gain, "3000 0.15 0.15 10 0.15 0.1 0 -1"));
+    ASSERT_THAT(def, ::testing::NotNull()) << gain;
+
+    auto settle = [](mjModel* m) {
+      mjData* d = mj_makeData(m);
+      d->ctrl[0] = 0.0;                       // no excitation at all
+      for (int i = 0; i < 6000; i++) mj_step(m, d);
+      double l_ce = d->muscle_l_ce[0];
+      mj_deleteData(d);
+      return l_ce;
+    };
+
+    double l_default = settle(def), l_explicit = settle(exp), l_zero = settle(off);
+    EXPECT_EQ(l_default, l_explicit) << gain;             // 0 in the slot means OpenSim's 0.01
+    // 1% of activation is a real force: the fiber does not sit in the same place without it
+    EXPECT_GT(std::fabs(l_default - l_zero), 1e-4) << gain;
+
+    mj_deleteModel(def);
+    mj_deleteModel(exp);
+    mj_deleteModel(off);
+  }
+}
+
+
+// OpenSim's rigid-tendon path has two rules beyond the algebra, and both zero the force: a fiber
+// on (or below) its lower clamp carries nothing, and a tendon whose length has fallen below its
+// slack length has buckled and imposes no velocity on the fiber.
+TEST_F(MuscleMtuTest, RigidTendonHonoursOpenSimsClampAndBucklingRules) {
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    // a rigid tendon (l_slack < 0.05 l_opt) on a path that can be driven shorter than it is
+    mjModel* model = LoadModelFromString(HangingMuscle(gain, "3000 0.15 0.005 10 0 0.1"));
+    ASSERT_THAT(model, ::testing::NotNull()) << gain;
+    mjData* data = mj_makeData(model);
+
+    bool saw_force = false, saw_zero = false;
+    for (int i = 0; i <= 300; i++) {
+      data->qpos[0] = 0.001*i;                // shortens the path from 0.30 m down to 0.00 m
+      data->qvel[0] = 0;
+      data->act[1] = 1.0;
+      data->ctrl[0] = 1.0;
+      mj_forward(model, data);
+
+      double F = data->muscle_F_mtu[0];
+      ASSERT_TRUE(std::isfinite(F)) << gain << " at qpos " << data->qpos[0];
+      EXPECT_GE(F, 0.0) << gain << ": a rigid tendon cannot push";
+      if (F > 1.0) saw_force = true;
+      if (F == 0.0) saw_zero = true;
+
+      // the reported tendon length is the real one, l_MTU - l_ce cos(phi), not l_slack
+      EXPECT_THAT(data->muscle_l_ce[0] + data->muscle_l_se[0],
+                  DoubleNear(data->actuator_length[0], 1e-12)) << gain;   // unpennated
+    }
+    EXPECT_TRUE(saw_force) << gain << ": the sweep never produced a force";
+    EXPECT_TRUE(saw_zero) << gain << ": the sweep never reached the clamped/buckled region";
 
     mj_deleteData(data);
     mj_deleteModel(model);

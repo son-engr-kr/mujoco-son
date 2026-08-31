@@ -143,9 +143,9 @@ default is itself zero are ones for which zero is also the value you would want,
      - same
      - 1e-9
    * - 7
-     - reserved, must be 0
-     -
-     -
+     - ``minimum_activation``
+     - n/a
+     - 0.01
    * - 8-11
      - ``ActiveForceLengthCurve``: ``min_norm_active_fiber_length``,
        ``transition_norm_fiber_length``, ``max_norm_active_fiber_length``,
@@ -201,14 +201,49 @@ Activation dynamics are MuJoCo's own: ``dyntype="muscle"`` is **required**, with
 ``dynprm="<activation_time_constant> <deactivation_time_constant>"`` (OpenSim's defaults are
 0.01 and 0.04). To approximate OpenSim's ``ignore_activation_dynamics``, use small time constants.
 
-OpenSim's ``minimum_activation`` (default 0.01) is not a separate parameter here; set
-``ctrlrange="0.01 1"`` to reproduce it, which is what OpenSim's own ``min_control`` does.
+``minimum_activation`` (slot 7) floors the activation the force is built from, exactly as OpenSim
+does — it clamps to ``[minimum_activation, 1]`` wherever it computes a force. A Millard muscle
+therefore never fully switches off. Pass a negative value to ask for a true zero. OpenSim also
+raises ``min_control`` to match; the MJCF equivalent is ``ctrlrange="0.01 1"``.
 
 .. code-block:: xml
 
    <general name="soleus_r" tendon="soleus_r" gaintype="millard_mtu" biastype="none"
             dyntype="muscle" dynprm="0.01 0.04" ctrllimited="true" ctrlrange="0 1"
             gainprm="3549 0.05 0.25 10 0.4887 0.1"/>
+
+.. _mtuDifferences:
+
+Deliberate differences from the source models
+---------------------------------------------
+
+Everything above is a faithful port. These are the places where it is not, named rather than
+buried:
+
+**Discretization.** OpenSim integrates ``l_ce`` as an ODE state with an adaptive-step integrator,
+solving the equilibrium for ``dl_ce/dt``. This solves implicitly for ``l_ce`` once per fixed step.
+The fixed point is the same equilibrium, but the trajectory differs at finite ``dt``, so parity
+with OpenSim is ``O(dt)`` rather than exact. See :ref:`mtuNumerics` for why the implicit form is
+the one that fits a fixed-step engine.
+
+**Hyfydy's damping is explicit; this is implicit.** The Hyfydy User Manual states that its damping
+forces are "approximated using an explicit method" and that this "causes the resulting muscle
+damping forces in Hyfydy to differ slightly from the damping forces produced in the OpenSim
+implementation". ``hyfydy_mtu`` reproduces Hyfydy's *curves* but puts the damping term inside the
+same implicit residual the Millard model uses. The manual does not specify the explicit scheme
+precisely enough to reproduce it, and guessing one would make the result unquotable, so the
+difference is left standing and stated here instead.
+
+**maximum_pennation_angle is fixed at acos(0.1).** It is a property of OpenSim's
+``MuscleFixedWidthPennationModel``, which ``Millard2012EquilibriumMuscle`` constructs internally at
+its default; it is not serialized per muscle in a ``.osim``. Hardcoding the default is therefore
+faithful for any model that comes through that route.
+
+**Not verified against a running OpenSim.** What has been checked is that the curve machinery
+matches upstream: the Bezier evaluator is compared against OpenSim's own expanded polynomials, and
+the curves are held to the keypoint, C2-continuity and monotonicity criteria from
+``testSmoothSegmentedFunctionFactory.cpp``. An end-to-end force comparison against a running
+OpenSim has not been done.
 
 .. _mtuCurves:
 
@@ -269,11 +304,19 @@ same place for the same reason.
 
 **Rigid-tendon fallback.** When ``tendon_slack_length < 0.05 * optimal_fiber_length`` the
 series-elastic normalization is ill-conditioned for no physical gain, and the tendon is treated as
-inextensible: ``l_ce`` follows the path algebraically and the fiber force is transmitted directly.
+inextensible. This is OpenSim's own ``ignore_tendon_compliance`` path, rule for rule:
+
+* ``l_ce = clamp(sqrt((l_MTU - l_slack)^2 + h^2), lce_min)``
+* ``cos(phi) = cos(asin(h/l_ce))``, which is never negative — it is not signed by the path
+* ``l_T = l_MTU - l_ce cos(phi)``, reported as such, because a rigid tendon can still go slack
+* if ``l_T < l_slack`` the tendon has buckled: the fiber velocity is zero and ``f_V`` is 1
+* a fiber on or below its lower clamp carries **no force at all**
+* otherwise the fiber force is saturated at zero, so its parallel damping cannot make it push
+
 The Hyfydy manual documents no rigid-tendon variant — its tendon is always the compliant quadratic
-— so for ``hyfydy_mtu`` this path evaluates Hyfydy's curves inside OpenSim's rigid-tendon
-formulation. It exists so a short-tendon muscle degrades gracefully rather than stalling the
-solver; a model that cares about Hyfydy parity should not be in this regime.
+— so for ``hyfydy_mtu`` this path evaluates Hyfydy's curves inside OpenSim's formulation. It exists
+so a short-tendon muscle degrades gracefully rather than stalling the solver; a model that cares
+about Hyfydy parity should not be in this regime.
 
 **The reported fiber velocity is the implicit one.** ``act_dot`` for the fiber is
 ``(l_ce* - l_ce)/dt``, where ``l_ce*`` is the backward-Euler solution — not the instantaneous

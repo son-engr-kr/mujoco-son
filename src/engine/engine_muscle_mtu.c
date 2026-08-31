@@ -284,6 +284,7 @@ typedef struct mjMtuParams_ {
   mjtNum v_max_ms;   // v_max*l_opt, i.e. the actual m/s the normalization divides by
   mjtNum pen_h;      // l_opt*sin(phi_opt): the fixed pennation width
   mjtNum beta;       // fiber damping
+  mjtNum min_act;    // minimum_activation
   mjtNum tol;        // Newton residual tolerance
   mjtNum lce_min;    // lower clamp on l_ce
   int hyfydy;        // 1 = Hyfydy polynomial curves, 0 = Millard table
@@ -310,6 +311,13 @@ static void mtuResolveDefaults(const mjtNum* in, mjtNum* out) {
   if (out[mjMTU_BETA] == 0)  out[mjMTU_BETA] = 0.1;             // fiber_damping
   if (out[mjMTU_BETA] < 0)   out[mjMTU_BETA] = 0;               // explicit request for none
   if (out[mjMTU_TOL] == 0)   out[mjMTU_TOL] = 1e-9;
+
+  // minimum_activation. OpenSim clamps the activation to [minimum_activation, 1] wherever it
+  // builds a force (Millard2012EquilibriumMuscle.cpp: `a = clampActivation(...)`), and sets
+  // min_control to match, so the muscle never fully switches off. Same negative-means-zero
+  // convention as the damping.
+  if (out[mjMTU_MINACT] == 0) out[mjMTU_MINACT] = 0.01;
+  if (out[mjMTU_MINACT] < 0)  out[mjMTU_MINACT] = 0;
 
   // ActiveForceLengthCurve. x2 (1.0), curviness (1.0) and minimum_value (0, forced by the damped
   // Millard model) are not parameters here: OpenSim passes them as literals.
@@ -354,6 +362,7 @@ static void mtuGetParams(const mjModel* m, const mjData* d, int id, mjMtuParams*
   p->v_max_ms = prm[mjMTU_VMAX]*p->l_opt;
   p->beta = prm[mjMTU_BETA];
   p->tol = prm[mjMTU_TOL];
+  p->min_act = prm[mjMTU_MINACT];
 
   mjtNum phi_opt = prm[mjMTU_PENNATION];
   p->pen_h = phi_opt != 0 ? p->l_opt*mju_sin(phi_opt) : 0;   // the common case is unpennated
@@ -392,8 +401,8 @@ static void mtuCheckParams(const mjModel* m, int id, const mjMtuParams* p) {
     mju_error("%s actuator %d: gainprm[4] (pennation_angle_at_optimal) must be in [0, pi/2)",
               kind, id);
   }
-  if (prm[mjMTU_RESERVED7] != 0) {
-    mju_error("%s actuator %d: gainprm[7] is reserved and must be 0", kind, id);
+  if (prm[mjMTU_MINACT] > 1) {
+    mju_error("%s actuator %d: gainprm[7] (minimum_activation) must be <= 1", kind, id);
   }
 
   // Hyfydy's curves are published polynomials with no per-muscle shape. Silently ignoring a
@@ -567,58 +576,86 @@ static mjtNum mtuSolve(mjtNum l_ce, mjtNum l_mtu, mjtNum l_ce_prev, mjtNum A,
 #define mjMTU_RIGID_RATIO 0.05
 
 
-// Rigid-tendon force, with OpenSim's fixed-width pennation geometry. The tendon holds l_slack,
-// so the fiber's along-path projection is fixed by the path and l_ce follows algebraically:
-//   l_ce  = sqrt((l_mtu - l_slack)^2 + h^2)
-//   cos   = (l_mtu - l_slack)/l_ce
-//   v_ce  = v_mtu*cos
-// and the MTU transmits the fiber force directly, F = F_max (A f_L f_V + f_P + beta v0) cos.
+// Rigid-tendon force. This is OpenSim's own ignore_tendon_compliance path, rule for rule
+// (Millard2012EquilibriumMuscle::calcMuscleLengthInfo / calcFiberVelocityInfo /
+// calcMuscleDynamicsInfo, and isFiberStateClamped):
+//
+//   l_ce   = clamp(sqrt((l_MTU - l_slack)^2 + h^2), lce_min)     calcFiberLength + clampFiberLength
+//   cos(phi) = cos(asin(h/l_ce))                                 ALWAYS >= 0, never signed by the path
+//   l_T    = l_MTU - l_ce cos(phi)                               "necessary even for the rigid
+//                                                                 tendon, as it might have gone slack"
+//   if l_T < l_slack     -> tendon buckling: v_ce = 0, f_V = 1
+//   else                 -> v_ce = v_MTU cos(phi)
+//   if fiber clamped     -> ALL forces are zero. isFiberStateClamped is
+//                           (l_ce <= lce_min and v_ce <= 0) or l_ce < lce_min
+//   else   F_fiber = F_max (a f_L f_V + f_P + beta v0), saturated at 0 so a rigid tendon's
+//                           parallel damping cannot make the fiber push,
+//          F       = F_fiber cos(phi)
 //
 // NOTE for hyfydy_mtu: the Hyfydy manual documents no rigid-tendon variant -- its tendon is
-// always the compliant quadratic. This path therefore evaluates the Hyfydy curves inside
-// OpenSim's rigid-tendon formulation, which is our extension and not something Hyfydy defines.
-// It exists so a short-tendon muscle degrades gracefully instead of stalling the solver;
-// a model that cares about Hyfydy parity should not be in this regime.
+// always the compliant quadratic. This path therefore evaluates Hyfydy's curves inside OpenSim's
+// rigid-tendon formulation, which is our extension and not something Hyfydy defines. It exists so
+// a short-tendon muscle degrades gracefully instead of stalling the solver; a model that cares
+// about Hyfydy parity should not be in this regime.
 static mjtNum mtuRigidForce(mjtNum A, mjtNum l_mtu, mjtNum v_mtu, const mjMtuParams* p,
-                            mjtNum* l_ce_out, mjtNum* v_ce_out, mjtNum* dF_dvmtu) {
+                            mjtNum* l_ce_out, mjtNum* l_T_out, mjtNum* v_ce_out,
+                            mjtNum* dF_dvmtu) {
   mjtNum along = l_mtu - p->l_slack;
   mjtNum l_ce = mju_sqrt(along*along + p->pen_h*p->pen_h);
   if (l_ce < p->lce_min) {
     l_ce = p->lce_min;
   }
-  mjtNum cos_phi = along/l_ce;
-  if (cos_phi < 0) {
-    cos_phi = 0;                              // path shorter than the tendon: fiber carries nothing
+
+  // the pennation angle comes from asin(h/l_ce), so its cosine is non-negative whatever the path
+  // did; it is NOT (l_mtu - l_slack)/l_ce, which would be signed
+  mjtNum sp = p->pen_h > 0 ? p->pen_h/l_ce : 0;
+  if (sp > mjMTU_SINPHIMAX) {
+    sp = mjMTU_SINPHIMAX;
+  }
+  mjtNum cos_phi = mju_sqrt(1 - sp*sp);
+  mjtNum l_T = l_mtu - l_ce*cos_phi;
+
+  // a buckled tendon cannot impose a velocity on the fiber
+  int buckled = l_T < p->l_slack;
+  mjtNum v_ce = buckled ? 0 : v_mtu*cos_phi;
+
+  if (l_ce_out) *l_ce_out = l_ce;
+  if (l_T_out) *l_T_out = l_T;
+  if (v_ce_out) *v_ce_out = v_ce;
+  if (dF_dvmtu) *dF_dvmtu = 0;
+
+  // a fiber sitting on its lower clamp, or being pushed below it, carries nothing at all
+  if (l_ce < p->lce_min || (l_ce <= p->lce_min && v_ce <= 0)) {
+    return 0;
   }
 
-  mjtNum v_ce = v_mtu*cos_phi;
   mjtNum l0 = l_ce/p->l_opt;
   mjtNum v0 = v_ce/p->v_max_ms;
 
   mjtNum f_l, f_p, f_v, d_v;
+  if (buckled) {
+    f_v = 1;                                  // consistent with a fiber velocity of zero
+    d_v = 0;
+  }
   if (p->hyfydy) {
     f_l = hyfydyFL(l0, NULL);
     f_p = hyfydyFP(l0, NULL);
-    f_v = hyfydyFV(v0, &d_v);
+    if (!buckled) f_v = hyfydyFV(v0, &d_v);
   } else {
     mju_curveTableEval(p->curve[mjMUSCLECURVE_ACTIVE_FL], l0, &f_l, NULL);
     mju_curveTableEval(p->curve[mjMUSCLECURVE_PASSIVE_FL], l0, &f_p, NULL);
-    mju_curveTableEval(p->curve[mjMUSCLECURVE_FV], v0, &f_v, &d_v);
+    if (!buckled) mju_curveTableEval(p->curve[mjMUSCLECURVE_FV], v0, &f_v, &d_v);
   }
 
-  if (l_ce_out) *l_ce_out = l_ce;
-  if (v_ce_out) *v_ce_out = v_ce;
-
-  mjtNum F = p->F_max*(A*f_l*f_v + f_p + p->beta*v0)*cos_phi;
-  if (F <= 0) {                               // a rigid tendon cannot push
-    if (dF_dvmtu) *dF_dvmtu = 0;
+  mjtNum f_fiber = A*f_l*f_v + f_p + p->beta*v0;
+  if (f_fiber <= 0) {                         // saturate the damping: the fiber only pulls
     return 0;
   }
-  // v0 = v_mtu*cos(phi)/(v_max*l_opt) at fixed length, so the chain rule brings a second cos(phi)
-  if (dF_dvmtu) {
+  if (dF_dvmtu && !buckled) {
+    // v0 = v_mtu*cos(phi)/(v_max*l_opt) at fixed length, so the chain rule brings a second cos(phi)
     *dF_dvmtu = p->F_max*cos_phi*cos_phi*(A*f_l*d_v + p->beta)/p->v_max_ms;
   }
-  return F;
+  return p->F_max*f_fiber*cos_phi;
 }
 
 
@@ -644,12 +681,13 @@ static void mtuActAdr(const mjModel* m, int id, int* fiber, int* activation) {
 // mjDYN_MUSCLE for these gains, so the integration is plain Euler and there is no actrange to
 // clamp against (the compiler rejects one, since a range is per-actuator and would clamp the
 // fiber length too).
-static mjtNum mtuActivation(const mjModel* m, const mjData* d, int id, int act_adr) {
+static mjtNum mtuActivation(const mjModel* m, const mjData* d, int id, int act_adr,
+                            const mjMtuParams* p) {
   mjtNum A = d->act[act_adr];
   if (m->actuator_actearly[id]) {
     A += m->opt.timestep*d->act_dot[act_adr];
   }
-  return mju_clip(A, 0, 1);
+  return mju_clip(A, p->min_act, 1);
 }
 
 
@@ -663,11 +701,11 @@ static mjtNum mtuSolveAndReport(const mjModel* m, mjData* d, int id, const mjMtu
                                 mjtNum A, mjtNum l_ce, mjtNum l_mtu, mjtNum v_mtu, mjtNum dtv) {
   // rigid tendon: the fiber length is algebraic, so there is nothing to solve
   if (mtuIsRigid(p)) {
-    mjtNum l_ce_next, v_ce;
-    mjtNum F = mtuRigidForce(A, l_mtu, dtv > 0 ? v_mtu : 0, p, &l_ce_next, &v_ce, NULL);
+    mjtNum l_ce_next, l_T, v_ce;
+    mjtNum F = mtuRigidForce(A, l_mtu, dtv > 0 ? v_mtu : 0, p, &l_ce_next, &l_T, &v_ce, NULL);
     d->muscle_l_ce[id] = l_ce_next;
     d->muscle_v_ce[id] = v_ce;
-    d->muscle_l_se[id] = p->l_slack;
+    d->muscle_l_se[id] = l_T;
     d->muscle_F_mtu[id] = F;
     return l_ce_next;
   }
@@ -704,10 +742,11 @@ mjtNum mju_mtuMuscleForceVel(const mjModel* m, const mjData* d, int id) {
 
   int fiber, activation;
   mtuActAdr(m, id, &fiber, &activation);
-  mjtNum A = mju_clip(d->act[activation], 0, 1);
+  mjtNum A = mju_clip(d->act[activation], p.min_act, 1);
 
   mjtNum dF_dvmtu = 0;
-  mtuRigidForce(A, d->actuator_length[id], d->actuator_velocity[id], &p, NULL, NULL, &dF_dvmtu);
+  mtuRigidForce(A, d->actuator_length[id], d->actuator_velocity[id], &p,
+                NULL, NULL, NULL, &dF_dvmtu);
   return -dF_dvmtu;
 }
 
@@ -719,7 +758,7 @@ void mju_mtuMuscleActDot(const mjModel* m, mjData* d, int id) {
   int fiber, activation;
   mtuActAdr(m, id, &fiber, &activation);
 
-  mjtNum A = mtuActivation(m, d, id, activation);
+  mjtNum A = mtuActivation(m, d, id, activation, &p);
   mjtNum l_ce = d->act[fiber];
   mjtNum dt = m->opt.timestep;
 
@@ -759,7 +798,7 @@ void mju_mtuMuscleEquilibrate(const mjModel* m, mjData* d) {
 
     int fiber, activation;
     mtuActAdr(m, i, &fiber, &activation);
-    mjtNum A = mju_clip(d->act[activation], 0, 1);
+    mjtNum A = mju_clip(d->act[activation], p.min_act, 1);
 
     // dtv = 0 selects the isometric residual, so this is the fiber length at which the tendon
     // balances the fiber's static force
