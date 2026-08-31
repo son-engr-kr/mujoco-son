@@ -184,10 +184,6 @@ MJAPI char* mju_strncpy(char *dst, const char *src, int n);
 // sigmoid function over 0<=x<=1 using quintic polynomial
 MJAPI mjtNum mju_sigmoid(mjtNum x);
 
-#ifdef __cplusplus
-}
-#endif
-
 // d(actuator_force)/d(actuator_velocity) for a compliant_mtu actuator, for the implicit
 // integrators. Exactly zero for a compliant tendon; nonzero only on the rigid-tendon path.
 MJAPI mjtNum mju_compliantMuscleForceVel(const mjModel* m, const mjData* d, int actuator_id);
@@ -197,5 +193,9 @@ MJAPI void mju_compliantMuscleActDot(const mjModel* m, mjData* d, int actuator_i
 
 // Put every compliant_mtu fiber at its isometric equilibrium for the current pose.
 MJAPI void mju_compliantMuscleEquilibrate(const mjModel* m, mjData* d);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif  // MUJOCO_SRC_ENGINE_ENGINE_UTIL_MISC_H_
