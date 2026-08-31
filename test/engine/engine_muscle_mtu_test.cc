@@ -20,6 +20,7 @@
 
 #include <array>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -101,6 +102,253 @@ TEST_F(MuscleMtuTest, MillardCurveLandmarks) {
   EXPECT_THAT(d, DoubleNear(5.0, 1e-7));
   EXPECT_THAT(mju_millardCurve(mjMUSCLECURVE_FV, -1.0, nullptr, nullptr), DoubleNear(0.0, 1e-12));
   EXPECT_THAT(mju_millardCurve(mjMUSCLECURVE_FV, 1.0, nullptr, nullptr), DoubleNear(1.4, 1e-9));
+}
+
+
+// ------------------------------------------------------------------------------------------
+// Independent cross-check of the Bezier port.
+//
+// engine_muscle_millard_bezier.h deliberately does NOT transcribe OpenSim's evaluator: upstream
+// carries machine-generated expanded polynomials (Maple output, `t2 = u1 * 0.5e1` and so on),
+// which are error-prone to copy and unauditable, so the port computes the same quantities from
+// the Bernstein derivative identity by de Casteljau instead.
+//
+// That choice is only safe if the two agree, which is what this checks. `UpstreamDerivU` below is
+// SegmentedQuinticBezierToolkit::calcQuinticBezierCurveDerivU transcribed VERBATIM from
+// OpenSim/Common/SegmentedQuinticBezierToolkit.cpp, error checks aside. It exists solely as an
+// oracle for this test and is not compiled into the engine.
+//
+// (The chain rule on top of it, calcQuinticBezierCurveDerivDYDX orders 0-2, is short enough that
+// the port copies it directly and it needs no separate oracle.)
+double UpstreamDerivU(const millard::Vec6& pts, double u, int order) {
+  double val = -1;
+  double p0 = pts[0], p1 = pts[1], p2 = pts[2], p3 = pts[3], p4 = pts[4], p5 = pts[5];
+
+  switch (order) {
+    case 0: {
+      double u5 = 1;
+      double u4 = u;
+      double u3 = u4*u;
+      double u2 = u3*u;
+      double u1 = u2*u;
+      double u0 = u1*u;
+
+      double t2 = u1 * 0.5e1;
+      double t3 = u2 * 0.10e2;
+      double t4 = u3 * 0.10e2;
+      double t5 = u4 * 0.5e1;
+      double t9 = u0 * 0.5e1;
+      double t10 = u1 * 0.20e2;
+      double t11 = u2 * 0.30e2;
+      double t15 = u0 * 0.10e2;
+      val = p0 * (u0 * (-0.1e1) + t2 - t3 + t4 - t5 + u5 * 0.1e1)
+          + p1 * (t9 - t10 + t11 + u3 * (-0.20e2) + t5)
+          + p2 * (-t15 + u1 * 0.30e2 - t11 + t4)
+          + p3 * (t15 - t10 + t3)
+          + p4 * (-t9 + t2) + p5 * u0 * 0.1e1;
+    } break;
+    case 1: {
+      double t1 = u*u;
+      double t2 = t1*t1;
+      double t4 = t1 * u;
+      double t5 = t4 * 0.20e2;
+      double t6 = t1 * 0.30e2;
+      double t7 = u * 0.20e2;
+      double t10 = t2 * 0.25e2;
+      double t11 = t4 * 0.80e2;
+      double t12 = t1 * 0.90e2;
+      double t16 = t2 * 0.50e2;
+      val = p0 * (t2 * (-0.5e1) + t5 - t6 + t7 - 0.5e1)
+          + p1 * (t10 - t11 + t12 + u * (-0.40e2) + 0.5e1)
+          + p2 * (-t16 + t4 * 0.120e3 - t12 + t7)
+          + p3 * (t16 - t11 + t6)
+          + p4 * (-t10 + t5)
+          + p5 * t2 * 0.5e1;
+    } break;
+    case 2: {
+      double t1 = u*u;
+      double t2 = t1 * u;
+      double t4 = t1 * 0.60e2;
+      double t5 = u * 0.60e2;
+      double t8 = t2 * 0.100e3;
+      double t9 = t1 * 0.240e3;
+      double t10 = u * 0.180e3;
+      double t13 = t2 * 0.200e3;
+      val = p0 * (t2 * (-0.20e2) + t4 - t5 + 0.20e2)
+          + p1 * (t8 - t9 + t10 - 0.40e2)
+          + p2 * (-t13 + t1 * 0.360e3 - t10 + 0.20e2)
+          + p3 * (t13 - t9 + t5)
+          + p4 * (-t8 + t4)
+          + p5 * t2 * 0.20e2;
+    } break;
+    case 3: {
+      double t1 = u*u;
+      double t3 = u * 0.120e3;
+      double t6 = t1 * 0.300e3;
+      double t7 = u * 0.480e3;
+      double t10 = t1 * 0.600e3;
+      val = p0 * (t1 * (-0.60e2) + t3 - 0.60e2)
+          + p1 * (t6 - t7 + 0.180e3)
+          + p2 * (-t10 + u * 0.720e3 - 0.180e3)
+          + p3 * (t10 - t7 + 0.60e2)
+          + p4 * (-t6 + t3)
+          + p5 * t1 * 0.60e2;
+    } break;
+    case 4: {
+      double t4 = u * 0.600e3;
+      double t7 = u * 0.1200e4;
+      val = p0 * (u * (-0.120e3) + 0.120e3)
+          + p1 * (t4 - 0.480e3)
+          + p2 * (-t7 + 0.720e3)
+          + p3 * (t7 - 0.480e3)
+          + p4 * (-t4 + 0.120e3)
+          + p5 * u * 0.120e3;
+    } break;
+    case 5: {
+      val = p0 * (-0.120e3)
+          + p1 * 0.600e3
+          + p2 * (-0.1200e4)
+          + p3 * 0.1200e4
+          + p4 * (-0.600e3)
+          + p5 * 0.120e3;
+    } break;
+    default:
+      val = 0;
+  }
+  return val;
+}
+
+
+// The port and OpenSim's expanded polynomials must agree to machine precision, on arbitrary
+// control points and at every derivative order the curves use.
+TEST_F(MuscleMtuTest, BezierEvaluatorMatchesUpstreamExpandedPolynomials) {
+  // a deterministic spread of control points, including negative and widely separated ones
+  unsigned seed = 12345;
+  auto next = [&seed]() {
+    seed = seed*1103515245u + 12345u;
+    return static_cast<double>((seed >> 8) % 20000)/1000.0 - 10.0;   // [-10, 10]
+  };
+
+  double worst[6] = {0, 0, 0, 0, 0, 0};
+  for (int trial = 0; trial < 2000; trial++) {
+    millard::Vec6 pts;
+    double scale = 0;
+    for (int i = 0; i < 6; i++) {
+      pts.v[i] = next();
+      scale = std::fmax(scale, std::fabs(pts.v[i]));
+    }
+    for (int k = 0; k <= 20; k++) {
+      double u = k/20.0;
+      for (int order = 0; order <= 5; order++) {
+        double got = millard::DerivU(pts, u, order);
+        double want = UpstreamDerivU(pts, u, order);
+        // relative to the coefficient magnitude, which the high orders multiply by up to 1200
+        double tol_scale = scale*(order == 0 ? 1 : (order == 1 ? 5 : 1200));
+        worst[order] = std::fmax(worst[order], std::fabs(got - want)/tol_scale);
+      }
+    }
+  }
+  for (int order = 0; order <= 5; order++) {
+    EXPECT_LT(worst[order], 1e-14) << "derivative order " << order;
+  }
+}
+
+
+// d2y/dx2 of an exact curve at x, which SegFn::Eval does not expose (the engine never needs it
+// at runtime -- only the baker does, per knot).
+double SecondDeriv(const millard::SegFn& f, double x) {
+  if (x < f.x0 || x > f.x1) {
+    return 0.0;                                    // linear extrapolation has zero curvature
+  }
+  int i = f.IndexOf(x == f.x1 ? f.x1 - 1e-15 : x);
+  double u = millard::CalcU(x, f.sec[i].x, 0.5);
+  return millard::DerivDyDx(f.sec[i], u, 2);
+}
+
+
+// The four curves, at OpenSim's damped-model defaults.
+millard::SegFn ExactCurve(int which) {
+  switch (which) {
+    case mjMUSCLECURVE_ACTIVE_FL:
+      return millard::ActiveForceLength(0.4441, 0.73, 1.0, 1.8123, 0.0, 0.8616, 1.0);
+    case mjMUSCLECURVE_PASSIVE_FL:
+      return millard::FiberForceLength(0.0, 0.7, 0.2, 2.0/0.7, 0.75);
+    case mjMUSCLECURVE_TENDON_FL:
+      return millard::TendonForceLength(0.049, 1.375/0.049, 2.0/3.0, 0.5);
+    default:
+      return millard::ForceVelocity(1.4, 0.0, 0.25, 5.0, 0.0, 0.15, 0.6, 0.9);
+  }
+}
+
+
+// OpenSim's own acceptance criteria for these factories, from
+// OpenSim/Common/Test/testSmoothSegmentedFunctionFactory.cpp ("Keypoint Testing"): each curve
+// must not only pass through its defining points with the declared slope, but do so with ZERO
+// CURVATURE. That is the condition an intermediate control point has to be right for -- the
+// endpoint value and slope are pinned by the doubled corner points regardless.
+TEST_F(MuscleMtuTest, CurvesMeetOpenSimKeypointConditions) {
+  const double e0 = 0.049, kiso = 1.375/0.049;      // tendon defaults
+  millard::SegFn tendon = ExactCurve(mjMUSCLECURVE_TENDON_FL);
+  EXPECT_THAT(tendon.Value(1.0), DoubleNear(0.0, 1e-12));
+  EXPECT_THAT(tendon.Slope(1.0), DoubleNear(0.0, 1e-8));
+  EXPECT_THAT(SecondDeriv(tendon, 1.0), DoubleNear(0.0, 1e-6));
+  EXPECT_THAT(tendon.Value(1 + e0), DoubleNear(1.0, 1e-9));
+  EXPECT_THAT(tendon.Slope(1 + e0), DoubleNear(kiso, 1e-6));
+  EXPECT_THAT(SecondDeriv(tendon, 1 + e0), DoubleNear(0.0, 1e-4));
+
+  const double e0f = 0.7, kisof = 2.0/0.7;          // passive fiber defaults
+  millard::SegFn fiber = ExactCurve(mjMUSCLECURVE_PASSIVE_FL);
+  EXPECT_THAT(fiber.x0, DoubleNear(1.0, 1e-12));
+  EXPECT_THAT(fiber.x1, DoubleNear(1.0 + e0f, 1e-12));
+  EXPECT_THAT(fiber.Value(1.0), DoubleNear(0.0, 1e-12));
+  EXPECT_THAT(fiber.Slope(1.0), DoubleNear(0.0, 1e-8));
+  EXPECT_THAT(SecondDeriv(fiber, 1.0), DoubleNear(0.0, 1e-6));
+  EXPECT_THAT(fiber.Value(1 + e0f), DoubleNear(1.0, 1e-9));
+  EXPECT_THAT(fiber.Slope(1 + e0f), DoubleNear(kisof, 1e-6));
+  EXPECT_THAT(SecondDeriv(fiber, 1 + e0f), DoubleNear(0.0, 1e-4));
+}
+
+
+// C2 continuity, the other property OpenSim's factory test asserts. A wrong intermediate control
+// point leaves a jump in d2y/dx2 at a section boundary, and a jump is exactly what refinement
+// cannot shrink: halving the sample spacing must halve the largest step in the curvature.
+TEST_F(MuscleMtuTest, CurvesAreC2Continuous) {
+  for (int c = 0; c < mjNMUSCLECURVE; c++) {
+    millard::SegFn f = ExactCurve(c);
+    double jump[2];
+    for (int pass = 0; pass < 2; pass++) {
+      int n = 2000 << pass;
+      double worst = 0, prev = 0;
+      for (int i = 0; i <= n; i++) {
+        // stay strictly inside the domain: the seam to the linear extrapolation is C1, not C2,
+        // and faithfully so -- OpenSim's extrapolation has zero curvature while its Bezier end
+        // does not
+        double x = f.x0 + (f.x1 - f.x0)*(0.001 + 0.998*i/n);
+        double d2 = SecondDeriv(f, x);
+        if (i > 0) worst = std::fmax(worst, std::fabs(d2 - prev));
+        prev = d2;
+      }
+      jump[pass] = worst;
+    }
+    EXPECT_GT(jump[0]/jump[1], 1.8) << "curve " << c;   // 2.0 if C2, 1.0 at a curvature jump
+  }
+}
+
+
+// Monotonicity, the last of OpenSim's factory checks: the tendon and passive fiber curves must
+// rise without ever turning back, and so must the force-velocity curve.
+TEST_F(MuscleMtuTest, CurvesAreMonotonicWhereRequired) {
+  for (int c : {mjMUSCLECURVE_PASSIVE_FL, mjMUSCLECURVE_TENDON_FL, mjMUSCLECURVE_FV}) {
+    millard::SegFn f = ExactCurve(c);
+    double prev = -std::numeric_limits<double>::infinity();
+    for (int i = 0; i <= 4000; i++) {
+      double x = f.x0 + (f.x1 - f.x0)*(static_cast<double>(i)/4000);
+      double y = f.Value(x);
+      EXPECT_GE(y, prev - 1e-12) << "curve " << c << " decreased at x=" << x;
+      prev = y;
+      EXPECT_GE(f.Slope(x), -1e-9) << "curve " << c << " has negative slope at x=" << x;
+    }
+  }
 }
 
 
