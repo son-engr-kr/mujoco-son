@@ -49,7 +49,7 @@ export MUJOCO_PATH=$(cygpath -w "$PROJECT_DIR")
 export MUJOCO_PLUGIN_PATH=$(cygpath -w "$PROJECT_DIR/build/bin")
 
 pip wheel --no-deps --no-build-isolation \
-  "$PROJECT_DIR/python/dist/mujoco-3.3.3+son4.0.tar.gz" \
+  "$PROJECT_DIR/python/dist/mujoco-3.3.3+son4.0a1.tar.gz" \
   -w "$PROJECT_DIR/python/dist"
 ```
 - make a new tag

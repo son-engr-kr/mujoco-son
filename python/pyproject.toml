@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mujoco"
-version = "3.3.3+son4.0"
+version = "3.3.3+son4.0a1"
 authors = [
     {name = "Google DeepMind", email = "mujoco@deepmind.com"},
 ]

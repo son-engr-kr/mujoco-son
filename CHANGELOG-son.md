@@ -3,10 +3,26 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
-## v3.3.3+son4.0
+## v3.3.3+son4.0a1 — alpha
 
 Adds two muscle-tendon actuators and rebuilds all three onto MuJoCo's own state model.
 **This release breaks compatibility** — see the list at the end before upgrading.
+
+### Why alpha
+
+Everything below is verified in the sense the "Verification" section describes: the curves match
+OpenSim's own output, the state model is checked against MuJoCo's contracts, and 27 C++ plus 49
+Python tests pass. What has *not* happened is use:
+
+* no full-body model has been run with `millard_mtu` or `hyfydy_mtu` — the largest thing exercised
+  is 80 Rajagopal muscles on a synthetic single-DOF rig;
+* no RL or trajectory-optimisation workload has been run against them, so nothing has stressed the
+  throughput or the derivative path at scale;
+* the breaking changes below have not been exercised by any downstream code, and the `act` layout
+  change in particular will silently alter any existing keyframe.
+
+Later `a`/`b` releases are expected before `son4.0` final. Local version segments sort
+`son4.0a1 < son4.0b1 < son4.0`, so upgrading in place works as you would expect.
 
 ### New: `millard_mtu` and `hyfydy_mtu`
 

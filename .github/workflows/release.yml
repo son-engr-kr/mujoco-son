@@ -289,6 +289,34 @@ jobs:
     - name: List artifacts
       run: find artifacts -type f | sort
 
+    # A tag whose version does not match python/pyproject.toml produces artifacts named after
+    # something other than the tag, which is the classic way to publish a release nobody can
+    # install from the URLs in the README.
+    - uses: actions/checkout@v4
+      with:
+        path: src
+
+    - name: Check the tag matches the package version
+      run: |
+        tag_version="${GITHUB_REF_NAME#v}"
+        pkg_version="$(sed -n 's/^version = "\(.*\)"/\1/p' src/python/pyproject.toml)"
+        echo "tag: ${tag_version}   pyproject: ${pkg_version}"
+        if [ "${tag_version}" != "${pkg_version}" ]; then
+          echo "::error::tag ${GITHUB_REF_NAME} does not match python/pyproject.toml version ${pkg_version}"
+          exit 1
+        fi
+
+    # Mark alpha/beta/rc tags as pre-releases. Local version segments carry the marker in this
+    # fork (v3.3.3+son4.0a1), so match a trailing a<N>/b<N>/rc<N>.
+    - name: Classify the release
+      id: classify
+      run: |
+        if [[ "${GITHUB_REF_NAME}" =~ (a|b|rc)[0-9]+$ ]]; then
+          echo "prerelease=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "prerelease=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Create release
       uses: softprops/action-gh-release@v2
       with:
@@ -297,4 +325,5 @@ jobs:
           artifacts/**/*.tar.gz
           artifacts/**/*.zip
         draft: true
+        prerelease: ${{ steps.classify.outputs.prerelease }}
         generate_release_notes: true
