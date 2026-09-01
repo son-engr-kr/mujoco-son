@@ -3,7 +3,15 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
-## v3.3.3+son4.0a1 — alpha
+## v3.3.3+son4.0a2 — alpha
+
+Supersedes `son4.0a1`, which does not build its C++ test suite: three compliant-muscle helpers
+were declared in `src/engine/engine_util_misc.h` after the `extern "C"` block closed, so any C++
+translation unit including both that header and `mujoco.h` saw conflicting language linkage. The
+library and the published wheels were unaffected — the callers are C, and that header does not
+ship — but `a1` should not be used to build from source. Everything below is otherwise unchanged
+from `a1`.
+
 
 Adds two muscle-tendon actuators and rebuilds all three onto MuJoCo's own state model.
 **This release breaks compatibility** — see the list at the end before upgrading.
@@ -22,7 +30,7 @@ Python tests pass. What has *not* happened is use:
   change in particular will silently alter any existing keyframe.
 
 Later `a`/`b` releases are expected before `son4.0` final. Local version segments sort
-`son4.0a1 < son4.0b1 < son4.0`, so upgrading in place works as you would expect.
+`son4.0a1 < son4.0a2 < son4.0b1 < son4.0`, so upgrading in place works as you would expect.
 
 ### New: `millard_mtu` and `hyfydy_mtu`
 
