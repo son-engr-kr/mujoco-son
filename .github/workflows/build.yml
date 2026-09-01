@@ -180,11 +180,26 @@ jobs:
       working-directory: build
       shell: powershell
       run: |
-        Copy-Item (Join-Path `
-          ((Get-ChildItem -Directory `
-              -Path "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\14.*" |
-            Sort -Descending | Select-Object -First 1).FullName
-          ) 'x64\Microsoft.VC143.CRT\*.dll') "bin\Release"
+        # The Visual Studio edition and install path are not fixed -- the windows-2025 image
+        # moved off "2022\Enterprise" and broke the hardcoded path this step used to carry --
+        # so ask vswhere where VS actually is.
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        $vsPath = & $vswhere -latest -products * -property installationPath
+        $redist = Get-ChildItem -Directory -ErrorAction SilentlyContinue `
+                    -Path (Join-Path $vsPath 'VC\Redist\MSVC\14.*') |
+                  Sort-Object Name -Descending | Select-Object -First 1
+        if (-not $redist) {
+          # Fail here rather than carry on. If the workaround is still needed, skipping it makes
+          # the next step die on a DLL load error that says nothing about why; and if it is NOT
+          # needed any more, the right response is to delete this step, which is a decision to
+          # take deliberately rather than one to hide behind a warning.
+          Write-Host "::error::no VC redist under '$vsPath'. Either the runner image moved it"
+          Write-Host "::error::again (fix the lookup), or the redist is gone and this workaround"
+          Write-Host "::error::for actions/runner-images#10004 is obsolete and should be deleted."
+          exit 1
+        }
+        Copy-Item (Join-Path $redist.FullName 'x64\Microsoft.VC143.CRT\*.dll') 'bin\Release'
+        Write-Host "Copied the VC runtime from $($redist.FullName)"
     - name: Test MuJoCo
       working-directory: build
       run: ctest -C Release --output-on-failure .
