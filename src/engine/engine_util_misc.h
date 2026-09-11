@@ -184,6 +184,19 @@ MJAPI char* mju_strncpy(char *dst, const char *src, int n);
 // sigmoid function over 0<=x<=1 using quintic polynomial
 MJAPI mjtNum mju_sigmoid(mjtNum x);
 
+// Compliant muscle curves and reset. These are declared in mujoco.h as part of the public API,
+// so they must also be declared HERE, where they are defined: the build uses
+// -fvisibility=hidden, and a definition only gets default visibility if an MJAPI declaration is
+// in scope at that point. engine_util_misc.c does not include mujoco.h, so without these six the
+// public header promises symbols the library does not export -- which is what binding them to
+// Python surfaced.
+MJAPI mjtNum mju_compliantMuscleInvFvce0(mjtNum f_vce0, mjtNum K, mjtNum N);
+MJAPI mjtNum mju_compliantMuscleFlce0(mjtNum l_ce0, mjtNum w, mjtNum c);
+MJAPI mjtNum mju_compliantMuscleFp0(mjtNum l0, mjtNum e_ref);
+MJAPI mjtNum mju_compliantMuscleFp0Ext(mjtNum l0, mjtNum e_ref, mjtNum e_ref2);
+MJAPI void mju_compliantMuscleInit(const mjModel* m, mjData* d);
+MJAPI mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep);
+
 // d(actuator_force)/d(actuator_velocity) for a compliant_mtu actuator, for the implicit
 // integrators. Exactly zero for a compliant tendon; nonzero only on the rigid-tendon path.
 MJAPI mjtNum mju_compliantMuscleForceVel(const mjModel* m, const mjData* d, int actuator_id);

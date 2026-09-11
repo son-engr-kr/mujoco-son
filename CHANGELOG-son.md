@@ -3,6 +3,46 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## Unreleased
+
+### Fixed: the MTU muscle helpers are now reachable from Python
+
+`doc/muscle_mtu.rst` tells users to call `mju_mtuMuscleEquilibrate` after setting a pose rather
+than integrating one, and points at `mju_millardCurve` / `mju_hyfydyCurve` for comparing a model
+against OpenSim. None of them were bound, so from Python the documented sequence could not be
+run at all. Reported against `son4.0a2`.
+
+The whole muscle surface of `mujoco.h` is now bound, not a subset — partial exposure is what
+produced the report:
+
+`mju_compliantMuscleInvFvce0`, `mju_compliantMuscleFlce0`, `mju_compliantMuscleFp0`,
+`mju_compliantMuscleFp0Ext`, `mju_compliantMuscleInit`, `mju_compliantMuscleActDot`,
+`mju_compliantMuscleEquilibrate`, `mju_compliantMuscleForceVel`, `mju_compliantMuscleECC`,
+`mju_mtuMuscleInit`, `mju_mtuMuscleActDot`, `mju_mtuMuscleEquilibrate`,
+`mju_mtuMuscleForceVel`, `mju_millardCurve`, `mju_hyfydyCurve`, `mju_millardCurveCacheSize`.
+
+Binding them surfaced a second, older defect: **six of those were declared `MJAPI` in `mujoco.h`
+but never exported from the library.** The build uses `-fvisibility=hidden`, and a definition
+only gets default visibility if an `MJAPI` declaration is in scope where it is defined;
+`engine_util_misc.c` does not include `mujoco.h`, so the public header was promising symbols a C
+user could not link against. They are now declared in `engine_util_misc.h` as well.
+
+The optional `deriv` out-parameter of the two curve functions is bound as an optional
+single-element array, following `mj_constraintUpdate`'s `cost` argument, and the optional
+`gainprm` as an optional `mjNGAIN` array. No signature changed, so the C API is untouched.
+
+Verified against the documented workaround: one `mju_mtuMuscleEquilibrate` call lands where 270
+iterations of `act_dot[fiber] = (l_ce* - l_ce)/dt` land, to 6.2e-12 m in fiber length and
+9.7e-8 % of `F_max` in force.
+
+### Docs
+
+`doc/muscle_mtu.rst` now records an independent measurement of the assembled whole-muscle force
+against OpenSim — the gap that section previously listed as unverified. 38 of the 40 Rajagopal
+`Millard2012EquilibriumMuscle` muscles transfer at 0.0000 % of `F_max` RMSE through the 32-slot
+layout; two do not, and the cause is not established. Dropping the curve shape slots raises the
+median error to 7.0 %, which is the measured justification for carrying all 32.
+
 ## v3.3.3+son4.0a2 — alpha
 
 Supersedes `son4.0a1`, which does not build its C++ test suite: three compliant-muscle helpers

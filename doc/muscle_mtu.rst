@@ -83,6 +83,14 @@ one the pose implies. To start from the pose's isometric equilibrium — OpenSim
    mju_mtuMuscleEquilibrate(m, d);    // or mju_compliantMuscleEquilibrate for compliant_mtu
    mj_forward(m, d);
 
+and from Python:
+
+.. code-block:: python
+
+   mujoco.mj_forward(m, d)
+   mujoco.mju_mtuMuscleEquilibrate(m, d)
+   mujoco.mj_forward(m, d)
+
 Do this whenever the pose was **set** rather than integrated: after a reset, after loading a
 keyframe, after editing ``qpos``. Without it the first step simply takes one bounded fiber
 excursion to recover; nothing becomes unstable, the initial force is just not the equilibrium one.
@@ -248,13 +256,34 @@ against OpenSim's own output: ``tools/opensim_curve_dump.cpp`` compiles
 force and ``4.3e-6`` in slope, across the domain and outside it — which is the baked table's own
 interpolation error, so the port itself contributes nothing measurable.
 
-What has **not** been run is OpenSim's whole-muscle force, i.e. its own
-``estimateMuscleFiberState`` solving the fiber equilibrium at a given state. That call needs a
-constructed ``Millard2012EquilibriumMuscle``, which pulls in OpenSim's Object and Component
-framework, where the curves need only SimTK. The equilibrium assembly on top of the curves — the
-fixed-width pennation algebra, the force expression and the rigid-tendon rules — was instead
-transcribed from ``Millard2012EquilibriumMuscle.cpp`` and ``MuscleFixedWidthPennationModel.cpp``
-line by line, and is covered by the residual, geometry and static-load tests.
+The equilibrium assembly on top of the curves — the fixed-width pennation algebra, the force
+expression and the rigid-tendon rules — is not covered by that test. It was transcribed from
+``Millard2012EquilibriumMuscle.cpp`` and ``MuscleFixedWidthPennationModel.cpp`` line by line, and
+is covered by the residual, geometry and static-load tests in the suite. Running OpenSim's own
+``estimateMuscleFiberState`` against it would need a constructed
+``Millard2012EquilibriumMuscle``, which pulls in OpenSim's Object and Component framework, where
+the curves need only SimTK; that has not been done here.
+
+An **independent measurement** reported against ``son4.0a2`` covers the assembled force. Each of
+the 40 right-side ``Millard2012EquilibriumMuscle`` muscles of ``RajagopalLaiUhlrich2023.osim`` was
+cloned into a one-DoF slider probe with its path reduced to two points, so the slider coordinate
+is the MTU length, and the tendon force was read at activation 0 and 1 over 60 lengths. The same
+muscle rebuilt as a ``millard_mtu`` actuator, with all 32 ``gainprm`` slots read straight off the
+OpenSim muscle, gave an RMSE over active and passive of **0.0000 % of F_max for 38 of the 40** —
+exact to the printed precision, which is consistent with the curve agreement above. Two muscles
+did not match: ``soleus_r`` at 0.1864 % (peak 1.63) and ``glmax3_r`` at 0.2979 % (peak 2.38). The
+cause is not established; it is not the fiber-length clamp and not ``lce_min``, both of which were
+checked against the OpenSim source and agree.
+
+The same comparison transferring only the six mechanical slots and dropping the curve shapes
+raised the median error to 7.0 % (worst 17.8 %), which is the measured justification for carrying
+all 32.
+
+Converting a ``Thelen2003Muscle`` source is a different matter: there are no Millard curve
+parameters to transfer, and the reported error is ~17 %. Fitting the 13 isometric curve shape
+parameters against the Thelen curves reportedly brings the median to ~1.9 %. Treat that as a
+floor rather than a general result — 13 free parameters fitted to a smooth curve family will
+usually land somewhere good, and the measurement covers one model family.
 
 .. _mtuCurves:
 

@@ -1258,6 +1258,41 @@ PYBIND11_MODULE(_functions, pymodule) {
   Def<traits::mju_muscleGain>(pymodule);
   Def<traits::mju_muscleBias>(pymodule);
   Def<traits::mju_muscleDynamics>(pymodule);
+
+  // Muscle-tendon units (gaintype "compliant_mtu" / "millard_mtu" / "hyfydy_mtu")
+  Def<traits::mju_compliantMuscleInvFvce0>(pymodule);
+  Def<traits::mju_compliantMuscleFlce0>(pymodule);
+  Def<traits::mju_compliantMuscleFp0>(pymodule);
+  Def<traits::mju_compliantMuscleFp0Ext>(pymodule);
+  Def<traits::mju_compliantMuscleInit>(pymodule);
+  Def<traits::mju_compliantMuscleActDot>(pymodule);
+  Def<traits::mju_compliantMuscleEquilibrate>(pymodule);
+  Def<traits::mju_compliantMuscleForceVel>(pymodule);
+  Def<traits::mju_compliantMuscleECC>(pymodule);
+  Def<traits::mju_mtuMuscleInit>(pymodule);
+  Def<traits::mju_mtuMuscleActDot>(pymodule);
+  Def<traits::mju_mtuMuscleEquilibrate>(pymodule);
+  Def<traits::mju_mtuMuscleForceVel>(pymodule);
+  Def<traits::mju_millardCurve>(
+      pymodule,
+      [](int curve, mjtNum x,
+         std::optional<Eigen::Ref<const EigenVectorX>> gainprm,
+         std::optional<Eigen::Ref<Eigen::Vector<mjtNum, 1>>> deriv) {
+        if (gainprm.has_value() && gainprm->size() != mjNGAIN) {
+          throw py::type_error("size of gainprm should be mjNGAIN");
+        }
+        return InterceptMjErrors(::mju_millardCurve)(
+            curve, x, gainprm.has_value() ? gainprm->data() : nullptr,
+            deriv.has_value() ? deriv->data() : nullptr);
+      });
+  Def<traits::mju_hyfydyCurve>(
+      pymodule,
+      [](int curve, mjtNum x,
+         std::optional<Eigen::Ref<Eigen::Vector<mjtNum, 1>>> deriv) {
+        return InterceptMjErrors(::mju_hyfydyCurve)(
+            curve, x, deriv.has_value() ? deriv->data() : nullptr);
+      });
+  Def<traits::mju_millardCurveCacheSize>(pymodule);
   DEF_WITH_OMITTED_PY_ARGS(traits::mju_encodePyramid, "dim")(
       pymodule,
       [](Eigen::Ref<EigenVectorX> pyramid, Eigen::Ref<const EigenVectorX> force,

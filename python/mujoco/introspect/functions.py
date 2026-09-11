@@ -7976,6 +7976,335 @@ FUNCTIONS: Mapping[str, FunctionDecl] = dict([
          ),
          doc='Muscle activation dynamics, prm = (tau_act, tau_deact, smoothing_width).',  # pylint: disable=line-too-long
      )),
+    ('mju_compliantMuscleInvFvce0',
+     FunctionDecl(
+         name='mju_compliantMuscleInvFvce0',
+         return_type=ValueType(name='mjtNum'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='f_vce0',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='K',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='N',
+                 type=ValueType(name='mjtNum'),
+             ),
+         ),
+         doc='Inverse force-velocity relation of the compliant_mtu contractile element.',
+     )),
+    ('mju_compliantMuscleFlce0',
+     FunctionDecl(
+         name='mju_compliantMuscleFlce0',
+         return_type=ValueType(name='mjtNum'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='l_ce0',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='w',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='c',
+                 type=ValueType(name='mjtNum'),
+             ),
+         ),
+         doc='Active force-length relation of the compliant_mtu contractile element.',
+     )),
+    ('mju_compliantMuscleFp0',
+     FunctionDecl(
+         name='mju_compliantMuscleFp0',
+         return_type=ValueType(name='mjtNum'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='l0',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='e_ref',
+                 type=ValueType(name='mjtNum'),
+             ),
+         ),
+         doc='Passive force of a compliant_mtu series or parallel elastic element.',
+     )),
+    ('mju_compliantMuscleFp0Ext',
+     FunctionDecl(
+         name='mju_compliantMuscleFp0Ext',
+         return_type=ValueType(name='mjtNum'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='l0',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='e_ref',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='e_ref2',
+                 type=ValueType(name='mjtNum'),
+             ),
+         ),
+         doc='Passive force of a compliant_mtu bearing element.',
+     )),
+    ('mju_compliantMuscleInit',
+     FunctionDecl(
+         name='mju_compliantMuscleInit',
+         return_type=ValueType(name='void'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='m',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjModel', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='d',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjData'),
+                 ),
+             ),
+         ),
+         doc='Initialize the state of every compliant_mtu actuator, act = [fiber_length, activation].',
+     )),
+    ('mju_compliantMuscleActDot',
+     FunctionDecl(
+         name='mju_compliantMuscleActDot',
+         return_type=ValueType(name='void'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='m',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjModel', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='d',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjData'),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='actuator_id',
+                 type=ValueType(name='int'),
+             ),
+         ),
+         doc='Compute one compliant_mtu actuator fiber velocity into act_dot, and its force into mjData.',
+     )),
+    ('mju_compliantMuscleEquilibrate',
+     FunctionDecl(
+         name='mju_compliantMuscleEquilibrate',
+         return_type=ValueType(name='void'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='m',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjModel', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='d',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjData'),
+                 ),
+             ),
+         ),
+         doc='Put every compliant_mtu fiber at its isometric equilibrium for the current pose.',
+     )),
+    ('mju_compliantMuscleForceVel',
+     FunctionDecl(
+         name='mju_compliantMuscleForceVel',
+         return_type=ValueType(name='mjtNum'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='m',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjModel', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='d',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjData', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='actuator_id',
+                 type=ValueType(name='int'),
+             ),
+         ),
+         doc='d(actuator_force)/d(actuator_velocity) of a compliant_mtu actuator; 0 for a compliant tendon.',
+     )),
+    ('mju_compliantMuscleECC',
+     FunctionDecl(
+         name='mju_compliantMuscleECC',
+         return_type=ValueType(name='mjtNum'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='S',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='A',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='timestep',
+                 type=ValueType(name='mjtNum'),
+             ),
+         ),
+         doc='One explicit Euler step of compliant_mtu excitation-contraction coupling.',
+     )),
+    ('mju_mtuMuscleInit',
+     FunctionDecl(
+         name='mju_mtuMuscleInit',
+         return_type=ValueType(name='void'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='m',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjModel', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='d',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjData'),
+                 ),
+             ),
+         ),
+         doc='Initialize the state of every millard_mtu and hyfydy_mtu actuator, act = [fiber_length, activation].',
+     )),
+    ('mju_mtuMuscleActDot',
+     FunctionDecl(
+         name='mju_mtuMuscleActDot',
+         return_type=ValueType(name='void'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='m',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjModel', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='d',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjData'),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='actuator_id',
+                 type=ValueType(name='int'),
+             ),
+         ),
+         doc='Compute one millard_mtu or hyfydy_mtu fiber velocity into act_dot, and its force into mjData.',
+     )),
+    ('mju_mtuMuscleEquilibrate',
+     FunctionDecl(
+         name='mju_mtuMuscleEquilibrate',
+         return_type=ValueType(name='void'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='m',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjModel', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='d',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjData'),
+                 ),
+             ),
+         ),
+         doc='Put every millard_mtu and hyfydy_mtu fiber at its isometric equilibrium for the current pose.',
+     )),
+    ('mju_mtuMuscleForceVel',
+     FunctionDecl(
+         name='mju_mtuMuscleForceVel',
+         return_type=ValueType(name='mjtNum'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='m',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjModel', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='d',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjData', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='actuator_id',
+                 type=ValueType(name='int'),
+             ),
+         ),
+         doc='d(actuator_force)/d(actuator_velocity) of an MTU actuator; 0 for a compliant tendon.',
+     )),
+    ('mju_millardCurve',
+     FunctionDecl(
+         name='mju_millardCurve',
+         return_type=ValueType(name='mjtNum'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='curve',
+                 type=ValueType(name='int'),
+             ),
+             FunctionParameterDecl(
+                 name='x',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='gainprm',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjtNum', is_const=True),
+                 ),
+             ),
+             FunctionParameterDecl(
+                 name='deriv',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjtNum'),
+                 ),
+             ),
+         ),
+         doc='One normalized Millard2012 curve and, if deriv is given, its slope. gainprm may be None.',
+     )),
+    ('mju_hyfydyCurve',
+     FunctionDecl(
+         name='mju_hyfydyCurve',
+         return_type=ValueType(name='mjtNum'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='curve',
+                 type=ValueType(name='int'),
+             ),
+             FunctionParameterDecl(
+                 name='x',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='deriv',
+                 type=PointerType(
+                     inner_type=ValueType(name='mjtNum'),
+                 ),
+             ),
+         ),
+         doc='One normalized Hyfydy muscle_force_m2012fast curve and, if deriv is given, its slope.',
+     )),
+    ('mju_millardCurveCacheSize',
+     FunctionDecl(
+         name='mju_millardCurveCacheSize',
+         return_type=ValueType(name='int'),
+         parameters=(),
+         doc='Number of distinct Millard curves the process-wide bake cache holds.',
+     )),
     ('mju_encodePyramid',
      FunctionDecl(
          name='mju_encodePyramid',

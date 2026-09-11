@@ -231,6 +231,134 @@ def test_zero_means_opensim_default():
     assert b.muscle_F_mtu[0] == pytest.approx(a.muscle_F_mtu[0], abs=1e-9)
 
 
+# ---------------------------------------------------------------------------------------
+# The helper bindings. doc/muscle_mtu.rst tells users to call these, so they have to be
+# reachable from Python; they were exported from the C library but unbound until now.
+
+@pytest.mark.parametrize('gaintype', _MODELS)
+def test_equilibrate_binding_reaches_the_isometric_equilibrium(gaintype):
+    """The sequence doc/muscle_mtu.rst prescribes, run from Python."""
+    model = mujoco.MjModel.from_xml_string(_model_xml(gaintype, _gainprm()))
+    data = mujoco.MjData(model)
+    data.qpos[0] = 0.02
+    data.act[1] = 0.5
+    data.ctrl[0] = 0.5
+
+    mujoco.mj_forward(model, data)
+    seeded = data.act[0]
+    mujoco.mju_mtuMuscleEquilibrate(model, data)
+    mujoco.mj_forward(model, data)
+
+    # the fiber left its mj_resetData seed and is now at rest
+    assert data.act[0] != seeded
+    assert data.act_dot[0] == pytest.approx(0.0, abs=1e-9)
+    assert np.isfinite(data.muscle_F_mtu[0])
+
+
+def test_equilibrate_binding_matches_the_act_dot_iteration():
+    """One call must land where iterating the documented act_dot identity lands.
+
+    Before the binding existed the only way to equilibrate from Python was to iterate
+    act_dot[fiber] = (l_ce* - l_ce)/dt to a fixed point, at a step size forced to be
+    model.opt.timestep. That is what this compares against: same answer, bounded cost.
+    """
+    model = mujoco.MjModel.from_xml_string(_model_xml('millard_mtu', _gainprm()))
+
+    direct = mujoco.MjData(model)
+    iterated = mujoco.MjData(model)
+    for d in (direct, iterated):
+        d.qpos[0] = 0.02
+        d.act[1] = 0.5
+        d.ctrl[0] = 0.5
+
+    mujoco.mj_forward(model, direct)
+    mujoco.mju_mtuMuscleEquilibrate(model, direct)
+    mujoco.mj_forward(model, direct)
+
+    steps = 0
+    while steps < 5000:
+        mujoco.mj_forward(model, iterated)
+        previous = iterated.act[0]
+        iterated.act[0] += model.opt.timestep * iterated.act_dot[0]
+        iterated.act[1] = 0.5
+        steps += 1
+        if abs(iterated.act[0] - previous) <= 1e-13 * max(1.0, abs(previous)):
+            break
+    mujoco.mj_forward(model, iterated)
+
+    assert steps > 1, 'the iteration must actually have had work to do'
+    assert direct.act[0] == pytest.approx(iterated.act[0], abs=1e-9)
+    f_max = model.actuator_gainprm[0][FMAX]
+    assert direct.muscle_F_mtu[0] == pytest.approx(iterated.muscle_F_mtu[0], abs=1e-6*f_max)
+
+
+def test_compliant_muscle_equilibrate_binding():
+    prm = '3000 0.15 0.15 10 0.56 -2.995732274 1.5 5.0 0.04'
+    model = mujoco.MjModel.from_xml_string(_model_xml('compliant_mtu', prm))
+    data = mujoco.MjData(model)
+    data.qpos[0] = 0.02
+    data.act[1] = 0.5
+    data.ctrl[0] = 0.5
+    mujoco.mj_forward(model, data)
+    mujoco.mju_compliantMuscleEquilibrate(model, data)
+    mujoco.mj_forward(model, data)
+    assert data.act_dot[0] == pytest.approx(0.0, abs=1e-9)
+    assert np.isfinite(data.muscle_F_mtu[0])
+
+
+def test_curve_bindings_return_opensim_landmarks():
+    """mju_millardCurve / mju_hyfydyCurve, the comparison doc/muscle_mtu.rst points at."""
+    deriv = np.zeros(1)
+
+    # value and slope at each curve's defining point
+    assert mujoco.mju_millardCurve(0, 1.0, None, deriv) == pytest.approx(1.0, abs=1e-8)
+    assert mujoco.mju_millardCurve(1, 1.7, None, deriv) == pytest.approx(1.0, abs=1e-8)
+    assert deriv[0] == pytest.approx(2.0/0.7, abs=1e-6)     # stiffness_at_one_norm_force
+    assert mujoco.mju_millardCurve(2, 1.049, None, deriv) == pytest.approx(1.0, abs=1e-8)
+    assert deriv[0] == pytest.approx(1.375/0.049, abs=1e-6)
+    assert mujoco.mju_millardCurve(3, 0.0, None, deriv) == pytest.approx(1.0, abs=1e-8)
+    assert deriv[0] == pytest.approx(5.0, abs=1e-6)         # isometric_slope
+    assert mujoco.mju_millardCurve(3, 1.0, None, None) == pytest.approx(1.4, abs=1e-8)
+
+    assert mujoco.mju_hyfydyCurve(0, 1.0, None) == pytest.approx(1.0, abs=1e-12)
+    assert mujoco.mju_hyfydyCurve(3, 0.0, deriv) == pytest.approx(1.0, abs=1e-12)
+    assert deriv[0] == pytest.approx(0.11*(1.6 - 1)/0.11**2, rel=1e-9)
+
+
+def test_millard_curve_binding_honours_gainprm():
+    """A gainprm block must reach the curve, and None must mean OpenSim's defaults."""
+    tuned = np.zeros(mujoco.mjNGAIN)
+    tuned[PFL_E1] = 0.5                                     # strain_at_one_norm_force
+    # by definition the passive curve is 1.0 at 1 + strain_at_one_norm_force
+    assert mujoco.mju_millardCurve(1, 1.5, tuned, None) == pytest.approx(1.0, abs=1e-8)
+    assert mujoco.mju_millardCurve(1, 1.7, None, None) == pytest.approx(1.0, abs=1e-8)
+    assert mujoco.mju_millardCurve(1, 1.5, None, None) < 0.9
+
+
+def test_curve_binding_errors_are_python_exceptions():
+    with pytest.raises(Exception, match='unknown curve'):
+        mujoco.mju_millardCurve(99, 1.0, None, None)
+    with pytest.raises(TypeError, match='gainprm'):
+        mujoco.mju_millardCurve(0, 1.0, np.zeros(5), None)
+
+
+def test_every_public_muscle_helper_is_reachable():
+    """The whole muscle surface of mujoco.h, not a subset.
+
+    Partial exposure is what made this a bug report: the symbols were exported from the C
+    library and absent from the module, and six of them were declared in mujoco.h without
+    being exported at all.
+    """
+    for name in ('mju_compliantMuscleInvFvce0', 'mju_compliantMuscleFlce0',
+                 'mju_compliantMuscleFp0', 'mju_compliantMuscleFp0Ext',
+                 'mju_compliantMuscleInit', 'mju_compliantMuscleActDot',
+                 'mju_compliantMuscleEquilibrate', 'mju_compliantMuscleForceVel',
+                 'mju_compliantMuscleECC', 'mju_mtuMuscleInit', 'mju_mtuMuscleActDot',
+                 'mju_mtuMuscleEquilibrate', 'mju_mtuMuscleForceVel',
+                 'mju_millardCurve', 'mju_hyfydyCurve', 'mju_millardCurveCacheSize'):
+        assert hasattr(mujoco, name), f'{name} is not bound'
+
+
 def test_hyfydy_rejects_curve_shape_parameters():
     """Hyfydy's curves are fixed polynomials, so a shape parameter is a modelling mistake."""
     with pytest.raises(ValueError, match='fixed polynomials'):
