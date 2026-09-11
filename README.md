@@ -13,7 +13,7 @@
 
 ## Install (mujoco-son)
 
-> **`son4.0a2` is an alpha.** The muscle models are verified against OpenSim's own
+> **`son4.0a3` is an alpha.** The muscle models are verified against OpenSim's own
 > curves and covered by unit tests, but they have not yet been run in a real
 > workload, and this release carries breaking changes that no downstream code has
 > exercised yet. See [CHANGELOG-son.md](CHANGELOG-son.md) before upgrading.
@@ -26,13 +26,13 @@ needs to be bumped between releases.
 
 ```bash
 # Linux x86_64 (glibc >= 2.35 — Ubuntu 22.04+, Debian 12+, recent Fedora/RHEL)
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0a2/mujoco-3.3.3+son4.0a2-cp311-cp311-linux_x86_64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0a3/mujoco-3.3.3+son4.0a3-cp311-cp311-linux_x86_64.whl
 
 # macOS Apple Silicon (M1/M2/M3/M4, macOS 11+)
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0a2/mujoco-3.3.3+son4.0a2-cp311-cp311-macosx_11_0_arm64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0a3/mujoco-3.3.3+son4.0a3-cp311-cp311-macosx_11_0_arm64.whl
 
 # Windows x86_64
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0a2/mujoco-3.3.3+son4.0a2-cp311-cp311-win_amd64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0a3/mujoco-3.3.3+son4.0a3-cp311-cp311-win_amd64.whl
 ```
 
 For Python versions other than 3.11, build from the sdist

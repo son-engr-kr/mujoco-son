@@ -3,7 +3,13 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
-## Unreleased
+## v3.3.3+son4.0a3 — alpha
+
+Supersedes `son4.0a2` for anyone driving the muscle models from Python: the helpers
+`doc/muscle_mtu.rst` tells you to call were exported from the C library but never bound, so the
+documented equilibration sequence could not be run at all. `a2` remains correct for C callers and
+for models driven purely through `mj_step`.
+
 
 ### Fixed: the MTU muscle helpers are now reachable from Python
 
