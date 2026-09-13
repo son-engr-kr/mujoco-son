@@ -3,6 +3,30 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## v3.3.3+son4.0a5 — alpha
+
+### Added: `mju_millardCurveCacheClear`
+
+The baked-curve cache never evicts, so a least-squares fit over Millard curve shapes — which
+bakes a fresh set per candidate and never revisits one — exhausted the 4096-curve cap after about
+eight muscles and then failed with `millard curve cache is full`. Reported against `son4.0a4`,
+with measured fill rates of 300-600 entries per muscle.
+
+`mju_millardCurveCacheClear()` drops every baked curve and returns how many it freed. Its
+precondition is that every `mjData` reset since those curves were baked is reset again before
+use: the clear frees what its `muscle_curve` entries point at, and `mj_resetData` re-resolves
+them. Bound in Python alongside `mju_millardCurveCacheSize`.
+
+Reproducing the reported workflow with a clear between muscles, the cache peaks at ~710 entries
+per muscle and returns to 0, so 20 muscles stay well under a cap that ~14,000 entries would have
+blown through three times over.
+
+**There is deliberately no automatic eviction**, LRU included, and that is not an omission.
+`mjData.muscle_curve` holds raw pointers into the cache, nothing can enumerate live `mjData`, and
+there is no reference count, so no policy can know when an entry is safe to free. Dropping the
+cache has to be the caller's statement that none of its `mjData` will be used unreset — a claim
+only the caller can make.
+
 ## v3.3.3+son4.0a4 — alpha
 
 Supersedes `son4.0a3`, which deadlocks the process the first time the Millard curve bake rejects
