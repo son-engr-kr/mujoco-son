@@ -3,6 +3,46 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## Unreleased
+
+### Fixed: `mju_mtuMuscleEquilibrate` did not reach the fiber equilibrium
+
+Reported against `son4.0a5`, with a reproduction and OpenSim `computeEquilibrium` answers to
+compare against. Two failures, with two separate causes.
+
+**The pennation derivative was discarded at the fiber clamp.** For a muscle pennated past about
+26 degrees, `lce_min` is `h/sin(phi_max)`, so at the clamp `h/l_ce` lands within an ulp of
+`sin(phi_max)` and can fall either side of it. The branch that fired there set `dphi` to zero, on
+the reasoning that the pennation angle is frozen below the clamp — which is only right if the
+fiber could go below it, and it cannot. What it produced was a Jacobian missing its dominant term
+exactly where that term dominates: `dl_T/dl_ce` collapsed from -9.97 to -0.10 on `glmax3_r`, a
+hundredfold error that sent the solve into a limit cycle between the clamp and a point far above
+it. The derivative is now taken from the clamped sine, which is continuous and, since
+`1 - sin(phi_max)^2` is 0.01, never divides by a vanishing root.
+
+That this branch was reachable at all contradicts a comment added in `son4.0`, which argued it
+was unreachable because `lce_min >= h/sin(phi_max)`. True in exact arithmetic; not in floating
+point, at the one value the clamp puts the iterate on.
+
+**Equilibration used plain Newton from a degenerate seed.** The stepping solver is warm-started a
+fraction of a fiber length from the root and regularised by the fiber damping over the timestep,
+and converges quadratically. Equilibration has neither: it starts from `mj_resetData`'s seed of
+`optimal_fiber_length`, which is the peak of the active force-length curve, and with no timestep
+the damping drops out of the Jacobian. On a muscle whose tendon is slack at that seed — `BIClong`
+of MoBL-ARMS, and every zero-pennation muscle in that model — every term of `dR/dl_ce` is zero to
+rounding. Newton had nothing to descend, and the step cap turned the divergence into a limit
+cycle, so the fiber came back exactly where it started and the call looked like a no-op.
+
+Equilibration now brackets the root and falls back to bisection wherever Newton leaves the
+bracket. It also no longer reads the incoming fiber length: it is a function of the pose and the
+activation, so two calls at the same pose agree bit for bit. Both reported muscles now match
+OpenSim's `computeEquilibrium` — `BIClong` at `l_ce` 0.10016 against 0.10012, `glmax3_r` at
+0.08020 against 0.08020 — and agree with relaxing the `act_dot` identity to steady state, which
+was the reporter's workaround.
+
+The stepping path is untouched: it keeps the plain Newton that was measured converging
+quadratically, and the pennation change removes a branch from it rather than adding one.
+
 ## v3.3.3+son4.0a5 — alpha
 
 ### Added: `mju_millardCurveCacheClear`

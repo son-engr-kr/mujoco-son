@@ -467,18 +467,27 @@ static void mtuEval(mjMtuEval* e, mjtNum l_ce, mjtNum l_mtu, mjtNum l_ce_prev,
   e->sin_phi = 0;
   e->dphi = 0;
   if (p->pen_h > 0) {
+    // Clamp sin(phi) to sin(phi_max), then take the derivative from the CLAMPED value.
+    //
+    // The clamp is on a knife edge and the solver sits right on it: lce_min is
+    // pen_h/sin(phi_max) for any muscle pennated past ~26 degrees, so at l_ce == lce_min the
+    // quotient pen_h/l_ce lands within an ulp of sin(phi_max) and may fall either side of it.
+    // An earlier version treated the clamped branch as phi being frozen and left dphi at 0,
+    // which is only right if l_ce could go below lce_min -- it cannot. What that produced was a
+    // Jacobian missing its pennation term exactly where that term dominates: dl_T/dl_ce
+    // collapsed from -9.97 to -cos(phi) = -0.10 on a real muscle, a hundredfold error that sent
+    // the isometric solve into a limit cycle between the clamp and a point far above it.
+    //
+    // Taking dphi from the clamped sin(phi) is both correct and continuous here. It is also
+    // safe: 1 - sin(phi_max)^2 is 0.01, not near zero, so nothing divides by a vanishing root.
     mjtNum sp = p->pen_h/l_ce;
     if (sp > mjMTU_SINPHIMAX) {
-      // GUARD, not live logic: lce_min >= pen_h/sin(phi_max) and every evaluation is clamped to
-      // lce_min, so sin(phi) = pen_h/l_ce cannot exceed sin(phi_max). It stays because a caller
-      // can write any fiber length into act, and 1/sqrt(1-sp^2) is imaginary past this point.
-      sp = mjMTU_SINPHIMAX;                 // phi frozen at phi_max, so dphi stays 0
-    } else {
-      mjtNum r = 1 - sp*sp;
-      e->dphi = -(sp/l_ce)/(r > 0 ? mju_sqrt(r) : 1);
+      sp = mjMTU_SINPHIMAX;
     }
+    mjtNum r = 1 - sp*sp;
+    e->dphi = -(sp/l_ce)/(r > 0 ? mju_sqrt(r) : 1);
     e->sin_phi = sp;
-    e->cos_phi = mju_sqrt(1 - sp*sp);
+    e->cos_phi = mju_sqrt(r);
   }
   e->l_T = l_mtu - l_ce*e->cos_phi;
   e->dlT = l_ce*e->sin_phi*e->dphi - e->cos_phi;
@@ -564,6 +573,92 @@ static mjtNum mtuSolve(mjtNum l_ce, mjtNum l_mtu, mjtNum l_ce_prev, mjtNum A,
     *e_out = e;
   }
   return l_ce;
+}
+
+
+// Isometric equilibrium, by a BRACKETED root-find. Used only by the equilibration entry points.
+//
+// The stepping solver is plain Newton and stays plain Newton: it is warm-started a fraction of a
+// fiber length from the root and regularised by beta/(dt*v_max*l_opt), and it converges
+// quadratically there. Equilibration has neither. It starts from whatever the state carries --
+// mj_resetData seeds l_opt, which is the PEAK of the active force-length curve -- and with no
+// timestep the damping term vanishes from the Jacobian. On a muscle whose tendon is slack at that
+// seed, every term of dR/dl_ce is then zero to rounding: no tendon stiffness, no active stiffness
+// at the peak, no passive stiffness below it. Newton has nothing to descend, and capping the step
+// turns the divergence into a limit cycle, which is how it presented -- the fiber came back
+// exactly where it started, so the call looked like a no-op.
+//
+// A bracket exists and is cheap to find. R is positive at lce_min, where the tendon is stretched
+// furthest, and negative for a long enough fiber, where the tendon has gone slack and the
+// parallel element carries everything. Newton is used where it lands inside the bracket, and
+// bisection where it does not, so the interval at least halves every iteration.
+//
+// The incoming fiber length is deliberately NOT used as a starting point. Equilibration is a
+// function of the pose and the activation, and making it one bit-exactly -- rather than letting
+// the bracket depend on where the fiber happened to be -- is worth more than the handful of
+// iterations a warm start would save. Without that, two calls at the same pose from different
+// fiber lengths land one ulp apart, which is invisible until something differentiates the result.
+static mjtNum mtuSolveIsometric(mjtNum l_mtu, mjtNum A,
+                                const mjMtuParams* p, mjMtuEval* e_out) {
+  mjMtuEval e;
+  mjtNum lo = p->lce_min;
+  mtuEval(&e, lo, l_mtu, lo, A, 0, p);
+
+  // No root at or above the clamp: the fiber wants to be shorter than it is allowed to be, so it
+  // sits on the clamp. Lengthening it only slackens the tendon further, taking R further negative.
+  if (e.R <= 0) {
+    if (e_out) *e_out = e;
+    return lo;
+  }
+
+  // walk up until the residual turns negative. f_L vanishes above the active curve's support
+  // while f_P keeps growing, so this always terminates.
+  mjtNum hi = lo + p->l_opt;
+  int bracketed = 0;
+  for (int i = 0; i < 64; i++) {
+    mtuEval(&e, hi, l_mtu, hi, A, 0, p);
+    if (e.R < 0) {
+      bracketed = 1;
+      break;
+    }
+    lo = hi;
+    hi += p->l_opt;
+  }
+  if (!bracketed) {
+    if (e_out) *e_out = e;
+    return hi;
+  }
+
+  mjtNum x = 0.5*(lo + hi);
+  int stale = 1;
+  for (int it = 0; it < 100; it++) {
+    mtuEval(&e, x, l_mtu, x, A, 0, p);
+    stale = 0;
+    if (mju_abs(e.R) < p->tol) {
+      break;
+    }
+    if (e.R > 0) {
+      lo = x;
+    } else {
+      hi = x;
+    }
+    mjtNum next = e.dR != 0 ? x - e.R/e.dR : x;
+    if (!(next > lo && next < hi)) {
+      next = 0.5*(lo + hi);                 // Newton left the bracket, or had no slope to use
+    }
+    if (next == x) {
+      break;                                // the bracket is down to one representable value
+    }
+    x = next;
+    stale = 1;
+  }
+  if (stale) {
+    mtuEval(&e, x, l_mtu, x, A, 0, p);
+  }
+  if (e_out) {
+    *e_out = e;
+  }
+  return x;
 }
 
 
@@ -710,9 +805,14 @@ static mjtNum mtuSolveAndReport(const mjModel* m, mjData* d, int id, const mjMtu
     return l_ce_next;
   }
 
-  int niter = dtv > 0 ? (m->opt.cmtu_iter > 0 ? m->opt.cmtu_iter : 12) : 100;
   mjMtuEval e;
-  mjtNum l_ce_next = mtuSolve(l_ce, l_mtu, l_ce, A, dtv, p, niter, &e);
+  mjtNum l_ce_next;
+  if (dtv > 0) {
+    int niter = m->opt.cmtu_iter > 0 ? m->opt.cmtu_iter : 12;
+    l_ce_next = mtuSolve(l_ce, l_mtu, l_ce, A, dtv, p, niter, &e);
+  } else {
+    l_ce_next = mtuSolveIsometric(l_mtu, A, p, &e);
+  }
 
   d->muscle_l_ce[id] = l_ce_next;
   d->muscle_l_se[id] = e.l_T;

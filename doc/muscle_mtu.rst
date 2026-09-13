@@ -95,6 +95,14 @@ Do this whenever the pose was **set** rather than integrated: after a reset, aft
 keyframe, after editing ``qpos``. Without it the first step simply takes one bounded fiber
 excursion to recover; nothing becomes unstable, the initial force is just not the equilibrium one.
 
+The equilibration is a **function of the pose and the activation only** — it does not use the
+fiber length it finds in ``act``, so two calls at the same pose give the same answer bit for bit
+whatever the fiber was doing beforehand. It solves the isometric residual by bracketing rather
+than by the Newton the stepping path uses, because the state it starts from is the worst case
+rather than a typical one: ``mj_resetData`` seeds ``optimal_fiber_length``, which is the peak of
+the active force-length curve, and with no timestep the fiber damping drops out of the Jacobian.
+On a muscle whose tendon is slack at that seed there is no slope to descend at all.
+
 A keyframe that stores ``act`` restores the fiber length along with the activation, so a keyframe
 captured from a running simulation needs no equilibration.
 
@@ -366,6 +374,13 @@ iteration cap is ``option/cmtu_iter`` (default 12).
 active curve's left foot the active curve is identically zero, so nothing is lost, and the
 pennation term :math:`1/\sqrt{1-(h/l_{ce})^2}` diverges at :math:`l_{ce}=h`. OpenSim clamps in the
 same place for the same reason.
+
+For any muscle pennated past about 26 degrees the pennation bound is the binding one, and then the
+clamp sits exactly where :math:`\sin\phi = \sin\phi_{max}`: the quotient ``h/l_ce`` lands within
+an ulp of the limit and may fall either side of it. The pennation derivative is therefore taken
+from the *clamped* sine rather than being switched off in that branch, which keeps it continuous
+across the knife edge. :math:`1-\sin^2\phi_{max}` is 0.01, so nothing divides by a vanishing root
+there.
 
 **Rigid-tendon fallback.** When ``tendon_slack_length < 0.05 * optimal_fiber_length`` the
 series-elastic normalization is ill-conditioned for no physical gain, and the tendon is treated as

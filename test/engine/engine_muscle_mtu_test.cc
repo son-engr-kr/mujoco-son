@@ -990,6 +990,10 @@ TEST_F(MuscleMtuTest, ForceVelocityDerivativeMatchesFiniteDifference) {
     mjData* data = mj_makeData(model);
 
     auto force_at = [&](double qvel) {
+      // reset first: the two probes must differ in qvel and nothing else. Carrying the fiber
+      // length over from the previous probe would make this measure the equilibration's own
+      // tolerance, amplified by 1/(2h), rather than the velocity dependence it is after.
+      mj_resetData(model, data);
       data->qpos[0] = 0.02;
       data->qvel[0] = qvel;
       data->act[1] = 0.6;
@@ -1139,6 +1143,97 @@ TEST_F(MuscleMtuTest, CurveCacheClearIsIdempotent) {
   EXPECT_EQ(mju_millardCurveCacheSize(), 0);
   EXPECT_EQ(mju_millardCurveCacheClear(), 0);
   EXPECT_EQ(mju_millardCurveCacheSize(), 0);
+}
+
+
+// Equilibration has to reach the root from the seed mj_resetData leaves, and that seed is the
+// worst case rather than a typical one: l_opt is the PEAK of the active force-length curve, where
+// the active slope is zero, and if the tendon is slack there and the parallel element is too,
+// every term of dR/dl_ce vanishes. Plain Newton has nothing to descend; with a step cap it does
+// not diverge, it cycles, and the fiber comes back exactly where it started.
+//
+// Both muscles below are parameter transfers from real OpenSim muscles that did exactly that.
+TEST_F(MuscleMtuTest, EquilibrateReachesTheRootFromTheResetSeed) {
+  struct Case {
+    const char* name;
+    const char* prm;
+    double l_mtu;
+    double l_ce_expected;     // OpenSim computeEquilibrium
+  };
+  // BIClong (MoBL-ARMS), pennation 0: the seed sits at the active peak with a slack tendon, so
+  // the Jacobian is zero to rounding there.
+  // glmax3_r (Rajagopal), pennation 0.3824: the iterate lands on the fiber clamp, where
+  // sin(phi) is within an ulp of sin(phi_max).
+  const Case cases[] = {
+      {"BIClong", "525.1 0.1157 0.2723 10 0 0.1 0 0.01 "
+                  "0.4441 0.73 1.8123 0.8616 0 0 "
+                  "0 0.7 0.2 2.8571 0.75 0 "
+                  "0.049 28.0612 0.6667 0.5 "
+                  "1.4 0 0.25 5.0 0 0.15 0.6 0.9", 0.3851, 0.10016},
+      {"glmax3_r", "947.754098360656 0.16699999962441678 0.103 10 0.38241613 0.1 0 0.01 "
+                   "0.25 0.77 1.9 0.75 0 0 "
+                   "0.039777684490424015 0.7004987591743358 0.2 3.026995924046766 0.75 0 "
+                   "0.049 28.06122448979592 0.6666666666666666 0.5 "
+                   "1.4 0 0.25 5.0 0 0.15 0.6 0.9", 0.1554, 0.08020}};
+
+  for (const Case& c : cases) {
+    std::string xml = HangingMuscle("millard_mtu", c.prm);
+    mjModel* model = LoadModelFromString(xml);
+    ASSERT_THAT(model, ::testing::NotNull()) << c.name;
+    mjData* data = mj_makeData(model);
+
+    // put the path at the reported length; the anchor is at 0.3, the site at qpos
+    data->qpos[0] = 0.3 - c.l_mtu;
+    data->act[1] = 1.0;
+    data->ctrl[0] = 1.0;
+    mj_forward(model, data);
+    ASSERT_THAT(data->actuator_length[0], DoubleNear(c.l_mtu, 1e-9)) << c.name;
+
+    double seed = data->act[0];
+    mju_mtuMuscleEquilibrate(model, data);
+    mj_forward(model, data);
+
+    EXPECT_NE(data->act[0], seed) << c.name << ": equilibrate was a no-op";
+    EXPECT_THAT(data->act[0], DoubleNear(c.l_ce_expected, 1e-4)) << c.name;
+    EXPECT_GT(data->muscle_F_mtu[0], 1.0) << c.name << ": a taut tendon should carry force";
+
+    // and the fiber is genuinely at rest there
+    EXPECT_NEAR(data->act_dot[0], 0.0, 1e-6) << c.name;
+    EXPECT_LT(std::fabs(Residual(model, data, 0, false, 1.0)), 1e-6) << c.name;
+
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
+}
+
+
+// Equilibration is a function of the pose and the activation, not of where the fiber happened to
+// be. Two calls at the same pose from different fiber lengths must agree bit for bit -- a one-ulp
+// difference is invisible until something differentiates the result, and then it is not.
+TEST_F(MuscleMtuTest, EquilibrateIsIndependentOfTheIncomingFiberLength) {
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    mjModel* model = LoadModelFromString(HangingMuscle(gain, kDefaultPrm));
+    ASSERT_THAT(model, ::testing::NotNull()) << gain;
+    mjData* data = mj_makeData(model);
+
+    double results[3];
+    const double starts[3] = {0.05, 0.15, 0.40};   // well below, at, and well above l_opt
+    for (int i = 0; i < 3; i++) {
+      mj_resetData(model, data);
+      data->qpos[0] = 0.02;
+      data->act[0] = starts[i];
+      data->act[1] = 0.6;
+      data->ctrl[0] = 0.6;
+      mj_forward(model, data);
+      mju_mtuMuscleEquilibrate(model, data);
+      results[i] = data->act[0];
+    }
+    EXPECT_EQ(results[0], results[1]) << gain;
+    EXPECT_EQ(results[1], results[2]) << gain;
+
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
 }
 
 
