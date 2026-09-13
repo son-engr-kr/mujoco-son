@@ -10,9 +10,11 @@ Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog i
 Reported against `son4.0a5`, with a reproduction and OpenSim `computeEquilibrium` answers to
 compare against. Two failures, with two separate causes.
 
-**The pennation derivative was discarded at the fiber clamp.** For a muscle pennated past about
-26 degrees, `lce_min` is `h/sin(phi_max)`, so at the clamp `h/l_ce` lands within an ulp of
-`sin(phi_max)` and can fall either side of it. The branch that fired there set `dphi` to zero, on
+**The pennation derivative was discarded at the fiber clamp.** `lce_min` is `h/sin(phi_max)`
+whenever `sin(phi_opt) > sin(phi_max) * min_norm_active_fiber_length` — past 26 degrees of
+pennation with OpenSim's default 0.4441, past only 14 for a muscle like `glmax3_r` that lowers it
+to 0.25 — and then at the clamp `h/l_ce` lands within an ulp of `sin(phi_max)` and can fall either
+side of it. The branch that fired there set `dphi` to zero, on
 the reasoning that the pennation angle is frozen below the clamp — which is only right if the
 fiber could go below it, and it cannot. What it produced was a Jacobian missing its dominant term
 exactly where that term dominates: `dl_T/dl_ce` collapsed from -9.97 to -0.10 on `glmax3_r`, a

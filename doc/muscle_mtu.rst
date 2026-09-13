@@ -375,9 +375,12 @@ active curve's left foot the active curve is identically zero, so nothing is los
 pennation term :math:`1/\sqrt{1-(h/l_{ce})^2}` diverges at :math:`l_{ce}=h`. OpenSim clamps in the
 same place for the same reason.
 
-For any muscle pennated past about 26 degrees the pennation bound is the binding one, and then the
-clamp sits exactly where :math:`\sin\phi = \sin\phi_{max}`: the quotient ``h/l_ce`` lands within
-an ulp of the limit and may fall either side of it. The pennation derivative is therefore taken
+Which of the two bounds binds depends on the muscle: the pennation one does whenever
+:math:`\sin\phi_{opt} > \sin\phi_{max}\cdot` ``min_norm_active_fiber_length``, which is past 26
+degrees of pennation with OpenSim's default 0.4441 but past only 14 for a muscle like Rajagopal's
+``glmax3_r`` that lowers it to 0.25. When it does bind, the clamp sits exactly where
+:math:`\sin\phi = \sin\phi_{max}`: the quotient ``h/l_ce`` lands within an ulp of the limit and
+may fall either side of it. The pennation derivative is therefore taken
 from the *clamped* sine rather than being switched off in that branch, which keeps it continuous
 across the knife edge. :math:`1-\sin^2\phi_{max}` is 0.01, so nothing divides by a vanishing root
 there.

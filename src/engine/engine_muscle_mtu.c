@@ -469,9 +469,11 @@ static void mtuEval(mjMtuEval* e, mjtNum l_ce, mjtNum l_mtu, mjtNum l_ce_prev,
   if (p->pen_h > 0) {
     // Clamp sin(phi) to sin(phi_max), then take the derivative from the CLAMPED value.
     //
-    // The clamp is on a knife edge and the solver sits right on it: lce_min is
-    // pen_h/sin(phi_max) for any muscle pennated past ~26 degrees, so at l_ce == lce_min the
-    // quotient pen_h/l_ce lands within an ulp of sin(phi_max) and may fall either side of it.
+    // The clamp is on a knife edge and the solver sits right on it: lce_min is pen_h/sin(phi_max)
+    // whenever sin(phi_opt) > sin(phi_max)*afl_min -- past 26 degrees of pennation with OpenSim's
+    // default afl_min of 0.4441, past 14 for a muscle like Rajagopal's glmax3_r that lowers it to
+    // 0.25 -- and then at l_ce == lce_min the quotient pen_h/l_ce lands within an ulp of
+    // sin(phi_max) and may fall either side of it.
     // An earlier version treated the clamped branch as phi being frozen and left dphi at 0,
     // which is only right if l_ce could go below lce_min -- it cannot. What that produced was a
     // Jacobian missing its pennation term exactly where that term dominates: dl_T/dl_ce
