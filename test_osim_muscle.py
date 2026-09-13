@@ -8,6 +8,8 @@ stays finite and smooth, and that a reset is repeatable.
 
 Run:  pytest test_osim_muscle.py -v
 """
+import threading
+
 import numpy as np
 import pytest
 import mujoco
@@ -357,6 +359,68 @@ def test_every_public_muscle_helper_is_reachable():
                  'mju_mtuMuscleEquilibrate', 'mju_mtuMuscleForceVel',
                  'mju_millardCurve', 'mju_hyfydyCurve', 'mju_millardCurveCacheSize'):
         assert hasattr(mujoco, name), f'{name} is not bound'
+
+
+def test_rejected_curve_shape_does_not_wedge_the_bake_cache():
+    """A shape the bake refuses must not take the cache down with it.
+
+    The curve bake validates shape parameters, and the rejection reaches Python as an
+    exception. It used to be raised from inside the cache's critical section, and mju_error
+    does not unwind the C++ stack, so the lock_guard was never destroyed and every later bake
+    in the process blocked forever -- including a bake of a shape that had just succeeded.
+
+    Run in a worker thread with a deadline so a regression fails the test instead of hanging
+    the suite, which is how this failure presents.
+    """
+    model = mujoco.MjModel.from_xml_string(_model_xml('millard_mtu', _gainprm()))
+    data = mujoco.MjData(model)
+
+    good = np.array(model.actuator_gainprm[0], copy=True)
+    bad = np.array(good, copy=True)
+    # tendon: stiffness_at_one_norm_force must exceed 1/strain_at_one_norm_force
+    bad[TFL_E1], bad[TFL_KISO] = 0.00605, 70.7
+
+    outcome = {}
+
+    def run():
+        model.actuator_gainprm[0] = good
+        mujoco.mj_resetData(model, data)
+        outcome['first'] = 'ok'
+
+        model.actuator_gainprm[0] = bad
+        try:
+            mujoco.mj_resetData(model, data)
+            outcome['rejected'] = False
+        except Exception:
+            outcome['rejected'] = True
+
+        # byte-for-byte the shape that already succeeded
+        model.actuator_gainprm[0] = good
+        mujoco.mj_resetData(model, data)
+        outcome['second'] = 'ok'
+
+        # a function whose whole body is taking the cache lock
+        outcome['cache'] = mujoco.mju_millardCurveCacheSize()
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=60)
+
+    assert not worker.is_alive(), 'the bake cache is wedged after a rejected curve shape'
+    assert outcome['first'] == 'ok'
+    assert outcome['rejected'], 'the invalid tendon shape should have been rejected'
+    assert outcome['second'] == 'ok'
+    assert outcome['cache'] > 0
+
+
+def test_rejected_curve_shape_still_reports_why():
+    """The rejection has to name the condition, not just fail."""
+    model = mujoco.MjModel.from_xml_string(_model_xml('millard_mtu', _gainprm()))
+    data = mujoco.MjData(model)
+    model.actuator_gainprm[0, TFL_E1] = 0.00605
+    model.actuator_gainprm[0, TFL_KISO] = 70.7
+    with pytest.raises(Exception, match='kIso'):
+        mujoco.mj_resetData(model, data)
 
 
 def test_hyfydy_rejects_curve_shape_parameters():

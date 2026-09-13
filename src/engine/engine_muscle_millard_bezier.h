@@ -45,25 +45,29 @@
 #define MUJOCO_SRC_ENGINE_ENGINE_MUSCLE_MILLARD_BEZIER_H_
 
 #include <cmath>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <mujoco/mjtnum.h>
 #include "engine/engine_muscle_mtu.h"
-#include "engine/engine_util_errmem.h"
 
 namespace mujoco {
 namespace millard {
 
 // Shape parameters reach here straight from a model's gainprm, so a bad one is a user error,
-// not an internal invariant: fail with mju_error rather than an assert that a release build
-// would drop. The caller sets `context` to the actuator being built so the message names it.
-inline thread_local const char* check_context = "";
-
+// not an internal invariant: it has to be reported, not asserted away in a release build.
+//
+// THROW, rather than calling mju_error here. mju_error does not unwind the C++ stack, so raising
+// it from inside this header would leave every live destructor unrun -- including a lock_guard,
+// which is exactly how a rejected curve shape used to leave the bake cache mutex locked for the
+// rest of the process. engine_muscle_bake.cc catches this outside the lock, with nothing else
+// alive, and converts it to mju_error there. Throwing internally and converting at the C
+// boundary is what the model compiler already does with mjCError.
 inline void Check(bool ok, const char* msg) {
   if (!ok) {
-    mju_error("millard curve%s: %s", check_context, msg);
+    throw std::invalid_argument(msg);
   }
 }
 

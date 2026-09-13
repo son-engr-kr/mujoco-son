@@ -312,6 +312,21 @@ pointers, so the stepping path never touches the cache.
 Hyfydy's curves need no bake at all: they are two cubics, two rationals and a quadratic, with no
 transcendental, which makes ``hyfydy_mtu`` the cheapest of the three models.
 
+.. admonition:: The cache only grows
+   :class: note
+
+   ``mjData.muscle_curve`` holds raw pointers into the cache, so an entry can never be evicted
+   while any ``mjData`` that might reference it is alive; nothing is freed. Each distinct curve
+   shape costs about 12 KB, so a muscle with a wholly distinct set of four costs ~49 KB, once.
+
+   For an ordinary model that is a handful of entries. A **parameter search over curve shapes** is
+   the case to size: every distinct shape it proposes is baked and kept, and the cache errors out
+   at 4096 curves (~50 MB). Sweeping more than ~1000 distinct four-curve shapes in one process
+   will reach that. ``mju_millardCurveCacheSize`` reports the current count.
+
+   A shape the bake rejects still leaves behind whichever of its four curves were valid, so a
+   rejection is not free either. The rejection itself is safe to catch and carry on from.
+
 ``mju_millardCurve`` and ``mju_hyfydyCurve`` expose the curves directly, for checking a model
 against OpenSim.
 

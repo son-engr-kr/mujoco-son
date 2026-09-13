@@ -35,7 +35,9 @@
 // the process -- which is what lets mjData hold raw pointers and mj_copyData copy them.
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -116,6 +118,18 @@ mujoco::millard::SegFn build(int curve, const mjtNum* s) {
 }
 
 
+// Look up a baked curve, baking it first if this shape has not been seen.
+//
+// THE LOCK IS NEVER HELD ACROSS THE BAKE, and that is the point rather than an optimisation.
+// Building a curve validates the shape parameters, which come straight from a model's gainprm,
+// and a rejected shape has to be reported. mju_error does not unwind the C++ stack, so a
+// lock_guard alive on that path is never destroyed and the mutex stays locked for the rest of
+// the process -- every later bake then blocks forever, including one that succeeded moments
+// before. Keeping every raising path outside the critical section removes that whole class,
+// rather than pre-checking the particular conditions that happen to fire today.
+//
+// The cost is that two threads racing on the same new shape may both bake it. Baking is
+// microseconds and the results are identical, so the loser simply drops its copy.
 const mjCurveTable* resolve_one(int curve, const mjtNum* prm, const char* context) {
   const CurveSpec& sp = spec_of(curve);
   mjtNum shape[kMaxShape] = {0};
@@ -123,23 +137,48 @@ const mjCurveTable* resolve_one(int curve, const mjtNum* prm, const char* contex
     shape[i] = prm[sp.slot[i]];
   }
 
+  // already baked?
+  bool full = false;
+  {
+    std::lock_guard<std::mutex> lock(cache_mutex());
+    for (const std::unique_ptr<Entry>& e : cache()) {
+      if (e->curve == curve && !std::memcmp(e->shape, shape, sizeof(mjtNum)*sp.nshape)) {
+        return &e->baked.table;
+      }
+    }
+    full = static_cast<int>(cache().size()) >= kMaxCurves;
+  }
+  if (full) {
+    mju_error("millard curve cache is full (%d distinct curve shapes)", kMaxCurves);
+  }
+
+  // Bake outside the lock. Check() throws, so the stack unwinds normally here and `baked` is
+  // still empty if it did; the message is copied out so that mju_error runs with the exception
+  // already destroyed.
+  Baked baked;
+  char err[256] = {0};
+  try {
+    baked = mujoco::millard::Bake(build(curve, shape), kKnots);
+  } catch (const std::exception& ex) {
+    std::snprintf(err, sizeof(err), "%s", ex.what());
+  }
+  if (err[0]) {
+    mju_error("millard curve%s: %s", context ? context : "", err);
+  }
+
   std::lock_guard<std::mutex> lock(cache_mutex());
+  // another thread may have baked this shape while we were outside the lock
   for (const std::unique_ptr<Entry>& e : cache()) {
     if (e->curve == curve && !std::memcmp(e->shape, shape, sizeof(mjtNum)*sp.nshape)) {
       return &e->baked.table;
     }
   }
-  if (static_cast<int>(cache().size()) >= kMaxCurves) {
-    mju_error("millard curve cache is full (%d distinct curve shapes)", kMaxCurves);
-  }
 
   std::unique_ptr<Entry> e(new Entry);
   e->curve = curve;
   std::memcpy(e->shape, shape, sizeof(shape));
-  mujoco::millard::check_context = context;
-  e->baked = mujoco::millard::Bake(build(curve, shape), kKnots);
-  mujoco::millard::check_context = "";
-  // Bake() stores knot.data() in the table, so re-point it after the move into the entry.
+  e->baked = std::move(baked);
+  // Bake() stored knot.data() in the table, so re-point it after the move into the entry.
   e->baked.table.knot = e->baked.knot.data();
   const mjCurveTable* out = &e->baked.table;
   cache().push_back(std::move(e));

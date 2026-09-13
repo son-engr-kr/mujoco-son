@@ -3,6 +3,37 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## Unreleased
+
+### Fixed: a rejected curve shape no longer wedges the bake cache
+
+The Millard curve bake validates the shape parameters it is handed, and a rejection reaches
+Python as `FatalError`. It was raised from inside the cache's critical section, and `mju_error`
+does not unwind the C++ stack, so the `lock_guard` was never destroyed and the mutex stayed
+locked for the rest of the process. Every later bake then blocked forever — including a bake of
+a shape that had succeeded moments earlier — at 0% CPU and ignoring SIGINT, so it presented as a
+hang rather than an error. Reported against `son4.0a3`, with a reproduction.
+
+Any parameter search over `millard_mtu` curve shapes eventually proposes a shape the bake
+refuses, so any such search eventually died. `compliant_mtu` was unaffected; it bakes no curves.
+
+The fix removes the whole class rather than the conditions that happen to fire today: **the lock
+is never held across anything that can raise.** The lookup takes it, drops it, bakes outside it,
+and takes it again to insert, re-checking in case another thread got there first. `Check` in the
+Bézier header now throws instead of calling `mju_error`, so the stack unwinds normally, and
+`engine_muscle_bake.cc` converts that to `mju_error` outside the lock with nothing else alive —
+which is what the model compiler already does with `mjCError`. The cache-full path was raising
+under the lock too, and no longer does.
+
+The regression test runs the sequence in a worker thread with a deadline, so a recurrence fails
+the suite instead of hanging it. Verified both ways: it fails on `a3` and passes on this build.
+
+### Docs
+
+`doc/muscle_mtu.rst` now states that the bake cache only grows — entries are pointed at by
+`mjData` and can never be evicted — with the arithmetic for sizing a parameter search against
+the 4096-curve cap.
+
 ## v3.3.3+son4.0a3 — alpha
 
 Supersedes `son4.0a2` for anyone driving the muscle models from Python: the helpers
