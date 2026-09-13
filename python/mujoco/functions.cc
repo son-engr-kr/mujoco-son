@@ -1293,6 +1293,7 @@ PYBIND11_MODULE(_functions, pymodule) {
             curve, x, deriv.has_value() ? deriv->data() : nullptr);
       });
   Def<traits::mju_millardCurveCacheSize>(pymodule);
+  Def<traits::mju_millardCurveCacheClear>(pymodule);
   DEF_WITH_OMITTED_PY_ARGS(traits::mju_encodePyramid, "dim")(
       pymodule,
       [](Eigen::Ref<EigenVectorX> pyramid, Eigen::Ref<const EigenVectorX> force,

@@ -1250,6 +1250,11 @@ MJAPI mjtNum mju_hyfydyCurve(int curve, mjtNum x, mjtNum* deriv);
 // Number of distinct Millard curves the process-wide bake cache holds.
 MJAPI int mju_millardCurveCacheSize(void);
 
+// Drop every baked Millard curve, returning how many were freed. The cache cannot evict on its
+// own, because mjData.muscle_curve holds raw pointers into it. PRECONDITION: every mjData reset
+// since those curves were baked must be reset again before use.
+MJAPI int mju_millardCurveCacheClear(void);
+
 // Convert contact force to pyramid representation.
 MJAPI void mju_encodePyramid(mjtNum* pyramid, const mjtNum* force, const mjtNum* mu, int dim);
 

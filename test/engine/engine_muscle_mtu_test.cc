@@ -1090,6 +1090,58 @@ TEST_F(MuscleMtuTest, RigidTendonHonoursOpenSimsClampAndBucklingRules) {
 }
 
 
+// The cache never evicts, because mjData.muscle_curve points into it and nothing can enumerate
+// live mjData. A search over curve shapes bakes a fresh set per candidate and never revisits one,
+// so it needs a way to drop them; mju_millardCurveCacheClear is it. What has to hold afterwards
+// is that a reset re-resolves the pointers and the model still produces the same force.
+TEST_F(MuscleMtuTest, CurveCacheClearFreesEntriesAndResetRepopulatesThem) {
+  mjModel* model = LoadModelFromString(HangingMuscle("millard_mtu", kDefaultPrm));
+  ASSERT_THAT(model, ::testing::NotNull());
+  mjData* data = mj_makeData(model);
+  data->ctrl[0] = 0.6;
+  for (int i = 0; i < 200; i++) mj_step(model, data);
+  double force_before = data->muscle_F_mtu[0];
+  ASSERT_GT(mju_millardCurveCacheSize(), 0);
+
+  // bake some shapes that will never be used again, as a fit does
+  for (int i = 1; i <= 20; i++) {
+    model->actuator_gainprm[mjNGAIN*0 + mjMTU_PFL_E1] = 0.5 + 0.01*i;
+    mj_resetData(model, data);
+  }
+  int grown = mju_millardCurveCacheSize();
+  EXPECT_GT(grown, 4) << "the sweep should have baked new shapes";
+
+  int freed = mju_millardCurveCacheClear();
+  EXPECT_EQ(freed, grown);
+  EXPECT_EQ(mju_millardCurveCacheSize(), 0);
+
+  // the precondition: reset before use. That re-resolves muscle_curve.
+  model->actuator_gainprm[mjNGAIN*0 + mjMTU_PFL_E1] = 0;   // back to the default shape
+  mj_resetData(model, data);
+  EXPECT_EQ(mju_millardCurveCacheSize(), mjNMUSCLECURVE) << "reset should re-bake exactly 4";
+  for (int c = 0; c < mjNMUSCLECURVE; c++) {
+    EXPECT_NE(data->muscle_curve[c], 0u) << "curve " << c << " not re-resolved";
+  }
+
+  data->ctrl[0] = 0.6;
+  for (int i = 0; i < 200; i++) mj_step(model, data);
+  EXPECT_THAT(data->muscle_F_mtu[0], DoubleNear(force_before, 1e-9))
+      << "the same model after a clear must produce the same force";
+
+  mj_deleteData(data);
+  mj_deleteModel(model);
+}
+
+
+// Clearing an empty cache is a no-op, not an error.
+TEST_F(MuscleMtuTest, CurveCacheClearIsIdempotent) {
+  mju_millardCurveCacheClear();
+  EXPECT_EQ(mju_millardCurveCacheSize(), 0);
+  EXPECT_EQ(mju_millardCurveCacheClear(), 0);
+  EXPECT_EQ(mju_millardCurveCacheSize(), 0);
+}
+
+
 // Hyfydy's curves have no per-muscle shape, so a shape parameter set on a hyfydy_mtu actuator
 // is a modelling mistake and must be rejected rather than silently ignored.
 TEST_F(MuscleMtuTest, HyfydyRejectsCurveShapeParameters) {

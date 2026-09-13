@@ -137,6 +137,19 @@ MJAPI void mju_millardBakeCurves(const mjtNum* prm, const char* context,
 // Number of distinct curves the process-wide cache currently holds. For tests and diagnostics.
 MJAPI int mju_millardCurveCacheSize(void);
 
+// Drop every baked curve, returning how many were freed.
+//
+// The cache never evicts on its own and it cannot: mjData.muscle_curve holds raw pointers into
+// it, and nothing can enumerate live mjData to find out whether an entry is still referenced.
+// That is fine for simulation, where a model has a handful of shapes and reuses them every step,
+// and wrong for a search over curve shapes, which bakes a fresh set per candidate and never
+// revisits one. This is the escape hatch for the second case.
+//
+// PRECONDITION: every mjData that has been reset since those curves were baked must be reset
+// again before it is used. This frees what its muscle_curve entries point at; mj_resetData
+// zeroes them and mju_mtuMuscleInit re-resolves them.
+MJAPI int mju_millardCurveCacheClear(void);
+
 
 //------------------------------ actuator entry points ---------------------------------------------
 

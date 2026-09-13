@@ -8305,6 +8305,13 @@ FUNCTIONS: Mapping[str, FunctionDecl] = dict([
          parameters=(),
          doc='Number of distinct Millard curves the process-wide bake cache holds.',
      )),
+    ('mju_millardCurveCacheClear',
+     FunctionDecl(
+         name='mju_millardCurveCacheClear',
+         return_type=ValueType(name='int'),
+         parameters=(),
+         doc='Drop every baked Millard curve, returning how many were freed.',
+     )),
     ('mju_encodePyramid',
      FunctionDecl(
          name='mju_encodePyramid',

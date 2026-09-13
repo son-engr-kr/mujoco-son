@@ -200,3 +200,13 @@ int mju_millardCurveCacheSize(void) {
   std::lock_guard<std::mutex> lock(cache_mutex());
   return static_cast<int>(cache().size());
 }
+
+
+int mju_millardCurveCacheClear(void) {
+  // Freeing cannot raise, so unlike the bake this is safe to do holding the lock.
+  std::lock_guard<std::mutex> lock(cache_mutex());
+  int n = static_cast<int>(cache().size());
+  cache().clear();
+  cache().shrink_to_fit();
+  return n;
+}

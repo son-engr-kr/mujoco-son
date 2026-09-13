@@ -327,6 +327,16 @@ transcendental, which makes ``hyfydy_mtu`` the cheapest of the three models.
    A shape the bake rejects still leaves behind whichever of its four curves were valid, so a
    rejection is not free either. The rejection itself is safe to catch and carry on from.
 
+   ``mju_millardCurveCacheClear`` drops the lot and returns how many it freed, which is what a
+   search should call between candidates it is done with. Its precondition is that **every**
+   ``mjData`` reset since those curves were baked is reset again before use: the clear frees what
+   its ``muscle_curve`` entries point at, and ``mj_resetData`` re-resolves them.
+
+   There is deliberately no automatic eviction, LRU or otherwise. An entry can be referenced by
+   any live ``mjData``, nothing can enumerate those, and there is no reference count, so no policy
+   can know when an entry is safe to free. Dropping the cache has to be the caller's statement
+   that none of its ``mjData`` will be used unreset, which is a claim only the caller can make.
+
 ``mju_millardCurve`` and ``mju_hyfydyCurve`` expose the curves directly, for checking a model
 against OpenSim.
 

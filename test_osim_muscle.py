@@ -423,6 +423,48 @@ def test_rejected_curve_shape_still_reports_why():
         mujoco.mj_resetData(model, data)
 
 
+def test_curve_cache_clear_bounds_a_shape_search():
+    """The cache cannot evict on its own, so a search over curve shapes needs to drop it.
+
+    mjData.muscle_curve holds raw pointers into the cache and nothing can enumerate live
+    mjData, so no automatic policy is safe. mju_millardCurveCacheClear is the explicit escape
+    hatch; its precondition is that every mjData is reset before use, which mj_resetData
+    satisfies by re-resolving the pointers.
+    """
+    model = mujoco.MjModel.from_xml_string(_model_xml('millard_mtu', _gainprm()))
+    data = mujoco.MjData(model)
+    mujoco.mju_millardCurveCacheClear()
+
+    base = np.array(model.actuator_gainprm[0], copy=True)
+    rng = np.random.default_rng(0)
+    for _ in range(40):                       # candidate shapes a fit would propose
+        g = np.array(base, copy=True)
+        g[PFL_E1] = rng.uniform(0.45, 0.85)
+        model.actuator_gainprm[0] = g
+        mujoco.mj_resetData(model, data)
+    grown = mujoco.mju_millardCurveCacheSize()
+    assert grown > 10, 'the sweep should have baked new shapes'
+
+    assert mujoco.mju_millardCurveCacheClear() == grown
+    assert mujoco.mju_millardCurveCacheSize() == 0
+    assert mujoco.mju_millardCurveCacheClear() == 0      # idempotent
+
+    # precondition honoured: reset re-resolves, and the model is unchanged
+    model.actuator_gainprm[0] = base
+    mujoco.mj_resetData(model, data)
+    assert mujoco.mju_millardCurveCacheSize() == 4
+    data.ctrl[0] = 0.6
+    for _ in range(200):
+        mujoco.mj_step(model, data)
+    after = data.muscle_F_mtu[0]
+
+    fresh = mujoco.MjData(model)
+    fresh.ctrl[0] = 0.6
+    for _ in range(200):
+        mujoco.mj_step(model, fresh)
+    assert after == pytest.approx(fresh.muscle_F_mtu[0], abs=1e-9)
+
+
 def test_hyfydy_rejects_curve_shape_parameters():
     """Hyfydy's curves are fixed polynomials, so a shape parameter is a modelling mistake."""
     with pytest.raises(ValueError, match='fixed polynomials'):
