@@ -3,7 +3,12 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
-## Unreleased
+## v3.3.3+son4.0a4 — alpha
+
+Supersedes `son4.0a3`, which deadlocks the process the first time the Millard curve bake rejects
+a shape. Anyone fitting `millard_mtu` curve shapes should move off `a3`; a model with fixed,
+valid shapes never hits it.
+
 
 ### Fixed: a rejected curve shape no longer wedges the bake cache
 
