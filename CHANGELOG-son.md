@@ -3,7 +3,7 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
-## Unreleased
+## v3.3.3+son4.0a6 — alpha
 
 ### Fixed: `mju_mtuMuscleEquilibrate` did not reach the fiber equilibrium
 
