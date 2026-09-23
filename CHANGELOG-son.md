@@ -106,6 +106,29 @@ as given. A non-zero slot 25 or 28 with damping now fails the load; the undamped
 `gainprm[5]`) keeps them. None of the 312 fitted muscles in `mujoco-compliant-muscles` sets either.
 jinsimul's Thelen fit (0.234 and 0.126) is the case this catches.
 
+### Fixed: Python `MjSpec` exposes all 32 `gainprm` slots
+
+The spec bindings are generated from `introspect/structs.py`, which still declared `mjsActuator`'s
+`gainprm` and `biasprm` with upstream's 10 slots after this fork widened `mjNGAIN` to 32. From
+Python, `E_REF_PE` (slot 10) and the Millard curve slots could not be set through `MjSpec`. Both are
+now the full 32-wide array. A shorter sequence, such as upstream's ten, replaces the whole array and
+zero-fills the rest, through the property and through `add_actuator`. More than 32 is an error. Code
+written against upstream's size keeps working, which matters for `myoassist_mjspec` and
+`myochallenge2026`, which pass ten.
+
+`specs_test.py::test_actuator_shortname`, which failed on `son4.0a7`, passes again, but the slot
+count was not why it failed. It passes `gainprm` as a `(10, 1)` array, and NumPy 2.4 made `float()`
+of a one-element array an error, which broke the element-by-element conversion. The `gainprm` and
+`biasprm` setters now read the value as an Eigen vector, which accepts that shape. The other array
+keyword arguments still convert element by element, so a `(n, 1)` array passed to one of them fails
+the same way on NumPy 2.4.
+
+### Found, not fixed
+
+`mjOption.cmtu_iter`, `mjOption.cmtu_integrator` and the `mjtCMTUIntegrator` enum are not reachable
+from Python, through `MjModel.opt` or `MjSpec.option`. `mjxmacro.h` and the introspect data predate
+them. They can still be set in MJCF.
+
 ## v3.3.3+son4.0a7 — alpha
 
 ### Added: `compliant_mtu` parallel element with its own slack length and reference strain

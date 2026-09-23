@@ -370,6 +370,35 @@ def test_compliant_buffer_element_holds_a_fiber_with_a_slack_tendon():
     assert f_be == pytest.approx(f_l, abs=1e-6)
 
 
+def test_spec_exposes_all_32_gain_slots():
+    """MjSpec's gainprm is the whole mjNGAIN array, so slot 10 (compliant_mtu's E_REF_PE) and
+    the Millard curve slots can be set from Python."""
+    spec = mujoco.MjSpec.from_string(_model_xml('compliant_mtu', _ABD_R))
+    actuator = spec.actuators[0]
+    assert len(actuator.gainprm) == mujoco.mjNGAIN == 32
+    actuator.gainprm[9] = 1.237603992
+    actuator.gainprm[10] = 0.3815447921
+    built = spec.compile()
+    reference = mujoco.MjModel.from_xml_string(_model_xml('compliant_mtu', _ABD_R + _ABD_R_PE))
+    np.testing.assert_array_equal(built.actuator_gainprm, reference.actuator_gainprm)
+
+
+def test_spec_gain_arrays_accept_upstream_length():
+    """Ten values, upstream's mjNGAIN, replace the array and zero the rest; more than 32 is an
+    error. Both through the property and through add_actuator."""
+    spec = mujoco.MjSpec()
+    actuator = spec.add_actuator(gainprm=[5.0] + [0.0]*9, biasprm=np.zeros((10, 1)))
+    assert actuator.gainprm[0] == 5.0
+    assert not np.any(actuator.gainprm[1:])
+    actuator.gainprm = np.arange(32, dtype=float)
+    actuator.gainprm = [1.0, 2.0, 3.0]
+    np.testing.assert_array_equal(actuator.gainprm, [1.0, 2.0, 3.0] + [0.0]*29)
+    with pytest.raises(ValueError, match='at most 32'):
+        actuator.gainprm = np.zeros(33)
+    with pytest.raises(ValueError, match='at most 32'):
+        spec.add_actuator(gainprm=np.zeros(33))
+
+
 def test_millard_damped_model_refuses_slopes_at_vmax():
     """OpenSim's damped model sets both at-vmax force-velocity slopes to 0; declaring one
     with damping is refused, and the undamped model keeps them."""

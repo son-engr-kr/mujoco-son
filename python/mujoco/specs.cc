@@ -55,6 +55,7 @@ using MjDouble5 = Eigen::Map<Eigen::Matrix<double, 5, 1>>;
 using MjDouble6 = Eigen::Map<Eigen::Matrix<double, 6, 1>>;
 using MjDouble10 = Eigen::Map<Eigen::Matrix<double, 10, 1>>;
 using MjDouble11 = Eigen::Map<Eigen::Matrix<double, 11, 1>>;
+using MjDouble32 = Eigen::Map<Eigen::Matrix<double, 32, 1>>;
 using MjDoubleVec = Eigen::Map<Eigen::VectorXd>;
 
 using MjIntRef2 = Eigen::Ref<const Eigen::Vector2i>;

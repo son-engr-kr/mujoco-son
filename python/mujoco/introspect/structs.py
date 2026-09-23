@@ -10261,7 +10261,7 @@ STRUCTS: Mapping[str, StructDecl] = dict([
                  name='gainprm',
                  type=ArrayType(
                      inner_type=ValueType(name='double'),
-                     extents=(10,),
+                     extents=(32,),
                  ),
                  doc='gain parameters',
              ),
@@ -10274,7 +10274,7 @@ STRUCTS: Mapping[str, StructDecl] = dict([
                  name='biasprm',
                  type=ArrayType(
                      inner_type=ValueType(name='double'),
-                     extents=(10,),
+                     extents=(32,),
                  ),
                  doc='bias parameters',
              ),

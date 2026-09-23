@@ -122,12 +122,41 @@ def _struct_binding_code(
   return code
 
 
+# Arrays sized by mjNGAIN, which this fork widens from upstream's 10 to 32. A shorter sequence
+# replaces the whole array, zero-filling the rest, so code written against upstream's ten slots
+# keeps working; a longer one is an error.
+_ZERO_FILLED_ARRAYS = (('mjsActuator', 'gainprm'), ('mjsActuator', 'biasprm'))
+
+
+def _zero_filled_array_binding_code(
+    field: ast_nodes.ArrayType, classname: str, varname: str
+) -> str:
+  """Python bindings for an mjNGAIN array that accepts up to its full size."""
+  size = field.extents[0]
+  rawclassname = classname.replace('mjs', 'raw::Mjs')
+  return f"""\
+  {classname}.def_property(
+      "{varname}",
+      []({rawclassname}& self) -> MjDouble{size} {{
+        return MjDouble{size}(self.{varname});
+    }},
+      []({rawclassname}& self, MjDoubleRefVec {varname}) {{
+        if ({varname}.size() > {size}) {{
+          throw pybind11::value_error("{varname} has at most {size} values.");
+        }}
+        MjDouble{size}(self.{varname}).setZero();
+        MjDouble{size}(self.{varname}).head({varname}.size()) = {varname};
+    }}, py::return_value_policy::reference_internal);"""
+
+
 def _array_binding_code(
     field: ast_nodes.ArrayType, classname: str = '', varname: str = ''
 ) -> str:
   """Creates a string that declares Python bindings for an array type."""
   if len(field.extents) > 1:
     raise NotImplementedError()
+  if (classname, varname) in _ZERO_FILLED_ARRAYS:
+    return _zero_filled_array_binding_code(field, classname, varname)
   innertype = field.inner_type.decl()
   rawclassname = classname.replace('mjs', 'raw::Mjs')
   rawclassname = rawclassname.replace('mjOption', 'raw::MjOption')
@@ -330,6 +359,13 @@ def generate_add() -> None:
         return f'set_string("{f.name}", out->{f.name});', 'string', f.name
       elif isinstance(f.type, ast_nodes.PointerType):
         return f'set_vec("{f.name}", out->{f.name});', 'vec', f.name
+      elif (key, f.name) in _ZERO_FILLED_ARRAYS:
+        return (
+            f'set_zero_filled_array("{f.name}", out->{f.name},'
+            f' {f.type.extents[0]});',
+            'zero_filled_array',
+            f.name,
+        )
       elif isinstance(f.type, ast_nodes.ArrayType):
         return (
             f'set_array("{f.name}", out->{f.name}, {f.type.extents[0]});',
@@ -531,6 +567,28 @@ def generate_add() -> None:
                 }
               } catch (const py::cast_error &e) {
                 throw pybind11::value_error(std::string(str) + " has the wrong type.");
+              }
+            }
+          };
+          """
+        elif t == 'zero_filled_array':
+          code += """\n
+          auto set_zero_filled_array = [&kwargs](const char* str, double* des, int size) {
+            if (kwargs.contains(str)) {
+              Eigen::VectorXd array;
+              try {
+                array = kwargs[str].cast<Eigen::VectorXd>();
+              } catch (const py::cast_error &e) {
+                throw pybind11::value_error(std::string(str) + " should be a list/array.");
+              }
+              if (array.size() > size) {
+                throw pybind11::value_error(std::string(str)
+                  + " should be a list/array of at most "
+                  + std::to_string(size)
+                  + " values.");
+              }
+              for (int idx = 0; idx < size; idx++) {
+                des[idx] = idx < array.size() ? array[idx] : 0;
               }
             }
           };
