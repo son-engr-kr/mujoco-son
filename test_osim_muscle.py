@@ -308,6 +308,50 @@ def test_compliant_muscle_equilibrate_binding():
     assert np.isfinite(data.muscle_F_mtu[0])
 
 
+# abd_r of jinsimul's myoleg26 Geyer fit (geyer_equivalent_myoleg26_extended_pe.csv):
+# F_max l_opt l_slack v_max W C N K E_REF, and its own parallel element L_PE0 E_REF_PE.
+_ABD_R = '4460.290481 0.0845 0.053 15 0.9219990822 -2.995732274 1.5 4 0.0492005381'
+_ABD_R_PE = ' 1.237603992 0.3815447921'
+
+
+def test_compliant_parallel_element_binding():
+    """Geyer's element is the new curve at (L_PE0, E_REF_PE) = (1, W), bit for bit."""
+    for l0 in np.linspace(0.5, 2.0, 61):
+        assert (mujoco.mju_compliantMuscleFpe0(l0, 1.0, 0.56) ==
+                mujoco.mju_compliantMuscleFp0(l0, 0.56))
+    assert mujoco.mju_compliantMuscleFpe0(1.45, 1.25, 0.4) == pytest.approx(0.25, rel=1e-15)
+    assert mujoco.mju_compliantMuscleFpe0(1.2, 1.25, 0.4) == 0.0
+
+
+def test_compliant_own_parallel_element_matches_closed_form():
+    """At a = 0 the parallel element and the tendon are quadratic springs in series."""
+    f_max, l_opt, l_slack, e_ref = 4460.290481, 0.0845, 0.053, 0.0492005381
+    l_pe0, e_ref_pe = 1.237603992, 0.3815447921
+    model = mujoco.MjModel.from_xml_string(_model_xml('compliant_mtu', _ABD_R + _ABD_R_PE))
+    data = mujoco.MjData(model)
+    onset = l_slack + l_opt*l_pe0
+    compliance = l_slack*e_ref + l_opt*e_ref_pe
+    for l_mtu in onset + compliance*np.linspace(0.05, 1.2, 12):
+        mujoco.mj_resetData(model, data)
+        data.qpos[0] = _HANG - l_mtu
+        mujoco.mj_forward(model, data)
+        mujoco.mju_compliantMuscleEquilibrate(model, data)
+        root = (l_mtu - onset)/compliance
+        assert data.muscle_F_mtu[0] == pytest.approx(f_max*root**2, abs=2e-6*f_max)
+
+
+@pytest.mark.parametrize('tail, why', [
+    (' 1.2376', 'must both be 0'),
+    (' 0 0.3815', 'must both be 0'),
+    (' -1.2376 0.3815', 'must both be 0'),
+    (_ABD_R_PE + ' 0.5', r'gainprm\[11\] is not a compliant_mtu parameter'),
+])
+def test_compliant_rejects_malformed_gainprm(tail, why):
+    """Slots 9-10 come as a pair; 11-31 are not parameters. Either mistake fails the load."""
+    with pytest.raises(ValueError, match=why):
+        mujoco.MjModel.from_xml_string(_model_xml('compliant_mtu', _ABD_R + tail))
+
+
 def test_curve_bindings_return_opensim_landmarks():
     """mju_millardCurve / mju_hyfydyCurve, the comparison doc/muscle_mtu.rst points at."""
     deriv = np.zeros(1)
@@ -352,12 +396,14 @@ def test_every_public_muscle_helper_is_reachable():
     being exported at all.
     """
     for name in ('mju_compliantMuscleInvFvce0', 'mju_compliantMuscleFlce0',
-                 'mju_compliantMuscleFp0', 'mju_compliantMuscleFp0Ext',
+                 'mju_compliantMuscleFp0', 'mju_compliantMuscleFpe0',
+                 'mju_compliantMuscleFp0Ext',
                  'mju_compliantMuscleInit', 'mju_compliantMuscleActDot',
                  'mju_compliantMuscleEquilibrate', 'mju_compliantMuscleForceVel',
                  'mju_compliantMuscleECC', 'mju_mtuMuscleInit', 'mju_mtuMuscleActDot',
                  'mju_mtuMuscleEquilibrate', 'mju_mtuMuscleForceVel',
-                 'mju_millardCurve', 'mju_hyfydyCurve', 'mju_millardCurveCacheSize'):
+                 'mju_millardCurve', 'mju_hyfydyCurve', 'mju_millardCurveCacheSize',
+                 'mju_millardCurveCacheClear'):
         assert hasattr(mujoco, name), f'{name} is not bound'
 
 

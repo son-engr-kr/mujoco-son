@@ -8032,6 +8032,26 @@ FUNCTIONS: Mapping[str, FunctionDecl] = dict([
          ),
          doc='Passive force of a compliant_mtu series or parallel elastic element.',
      )),
+    ('mju_compliantMuscleFpe0',
+     FunctionDecl(
+         name='mju_compliantMuscleFpe0',
+         return_type=ValueType(name='mjtNum'),
+         parameters=(
+             FunctionParameterDecl(
+                 name='l0',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='rest',
+                 type=ValueType(name='mjtNum'),
+             ),
+             FunctionParameterDecl(
+                 name='e_ref',
+                 type=ValueType(name='mjtNum'),
+             ),
+         ),
+         doc='Passive force of a compliant_mtu parallel elastic element with its own slack length.',  # pylint: disable=line-too-long
+     )),
     ('mju_compliantMuscleFp0Ext',
      FunctionDecl(
          name='mju_compliantMuscleFp0Ext',

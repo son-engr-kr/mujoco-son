@@ -3,6 +3,46 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## Unreleased
+
+### Added: `compliant_mtu` parallel element with its own slack length and reference strain
+
+Requested for jinsimul's decision 0024, which fits the parallel element of a Geyer muscle to its
+source model's passive curve instead of tying it to `W`. `gainprm[9]` is the element's slack
+length `L_PE0`, in `l_opt`, and `gainprm[10]` its reference strain `E_REF_PE`:
+`f_pe = ((l_ce/l_opt - L_PE0)/E_REF_PE)^2` above the slack length. Both 0 is Geyer & Herr 2010's
+element, `(1, W)`; otherwise both must be positive and finite.
+
+All five evaluations of the element (the rigid-tendon force, the isometric solve and the
+backward-Euler step, each with its finite-difference probe) now go through one function,
+`mju_compliantMuscleFpe0(l0, rest, e_ref)`, exported and bound in Python. At `(1, W)` it is
+`mju_compliantMuscleFp0(l0, W)` operation for operation.
+
+**A model that declares neither slot is bit-identical to `son4.0a6`.** Checked by running the same
+input grid against a build of `a6`'s source and against this one: 47,020 outputs over five models
+(three compliant tendons, two rigid), covering the isometric solve, the backward-Euler step from
+fibers off equilibrium at five path velocities, and a 2000-step driven trajectory. 70 of the 125
+passive points had the parallel element engaged. Every output matched bit for bit, on macOS arm64.
+In the suite, a muscle declaring `(1, W)` is checked bit for bit against one declaring nothing on
+all three branches.
+
+The solver lands on the element it is given. At zero activation the parallel element and the
+tendon are quadratic springs in series, which gives a closed form for the static force, and the
+isometric solve matches it to 2e-6 `F_max` with jinsimul's `abd_r` fit (`L_PE0` 1.2376,
+`E_REF_PE` 0.3815). From that equilibrium the stepping solve leaves the fiber where it is, which
+it would not if it saw a different element.
+
+### Changed: `compliant_mtu` rejects `gainprm` it does not read
+
+Slots 9-31 used to be ignored, so `a6` runs a model with its own parallel element without an
+error, and runs it wrong. A value in slots 11-31, one of slots 9-10 without the other, or a
+negative or non-finite value there now fails the load, from `mj_resetData` as `millard_mtu` does.
+
+No existing model is affected. All 3,565 `compliant_mtu` declarations across 73 MJCF files in the
+neumove projects, including the MyoAssist compliant models in `mujoco-compliant-muscles`, give
+exactly nine values. The 658 actuators in the files that compile on their own resolve slots 9-31
+to 0 after defaults as well.
+
 ## v3.3.3+son4.0a6 — alpha
 
 ### Fixed: `mju_mtuMuscleEquilibrate` did not reach the fiber equilibrium

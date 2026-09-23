@@ -228,6 +228,104 @@ raises ``min_control`` to match; the MJCF equivalent is ``ctrlrange="0.01 1"``.
             dyntype="muscle" dynprm="0.01 0.04" ctrllimited="true" ctrlrange="0 1"
             gainprm="3549 0.05 0.25 10 0.4887 0.1"/>
 
+.. _mtuCompliantParameters:
+
+compliant_mtu parameters
+------------------------
+
+``compliant_mtu`` is Geyer & Herr (2010)'s muscle-tendon unit as Seungmoon Song implements it
+(``seungmoon_muscle.py``). It reads eleven ``gainprm`` slots. Unlike ``millard_mtu``, zero is not
+a default in slots 0-8: each is used as written.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 8 16 56 20
+
+   * - Slot
+     - Name
+     - Meaning
+     - Geyer & Herr 2010
+   * - 0
+     - ``F_max``
+     - maximum isometric force [N]
+     -
+   * - 1
+     - ``l_opt``
+     - optimal fiber length [m]
+     -
+   * - 2
+     - ``l_slack``
+     - tendon slack length [m]
+     -
+   * - 3
+     - ``v_max``
+     - maximum contraction velocity [``l_opt``/s]
+     -
+   * - 4
+     - ``W``
+     - width of the active force-length curve
+     - 0.56
+   * - 5
+     - ``C``
+     - :math:`\ln f_L` at :math:`|l_{ce}/l_{opt} - 1| = W`
+     - ln 0.05
+   * - 6
+     - ``N``
+     - eccentric force at ``v_max``, in ``F_max``
+     - 1.5
+   * - 7
+     - ``K``
+     - force-velocity curvature
+     - 5
+   * - 8
+     - ``E_REF``
+     - tendon reference strain
+     - 0.04
+   * - 9
+     - ``L_PE0``
+     - parallel element slack length [``l_opt``]
+     - 1
+   * - 10
+     - ``E_REF_PE``
+     - parallel element reference strain
+     - ``W``
+   * - 11-31
+     - reserved
+     - must be 0
+     -
+
+The elements are
+
+.. math::
+
+   f_{SE} = \left(\frac{l_{se}/l_{slack} - 1}{E_{REF}}\right)^2, \qquad
+   f_{PE} = \left(\frac{l_{ce}/l_{opt} - L_{PE0}}{E_{REF,PE}}\right)^2, \qquad
+   f_L = \exp\!\left(C \left|\frac{l_{ce}/l_{opt} - 1}{W}\right|^3\right),
+
+the two quadratics zero below their slack lengths, and the fiber solves
+:math:`f_{SE} = f_{PE} + a\, f_L f_V`.
+
+**The parallel element may carry its own slack length and reference strain** (slots 9 and 10),
+for a muscle whose passive curve was fitted to a source model's rather than tied to ``W``. The two
+come as a pair: both 0 is Geyer & Herr's element, slack at ``l_opt`` with reference strain ``W``,
+and evaluates bit for bit as it did before these slots existed. Otherwise both must be positive
+and finite. One without the other, a negative or non-finite value, or anything non-zero in slots
+11-31 fails the load. A build that ignored them would run a different muscle from the one
+declared, and builds before ``son4.0a7`` do exactly that, silently.
+
+At zero activation the parallel element and the tendon are two quadratic springs in series, so
+the static passive force has a closed form, which the test suite checks the solver against:
+
+.. math::
+
+   \sqrt{F/F_{max}} = \frac{l_{MTU} - l_{slack} - l_{opt} L_{PE0}}
+                           {l_{slack} E_{REF} + l_{opt} E_{REF,PE}}
+   \qquad (l_{MTU} > l_{slack} + l_{opt} L_{PE0})
+
+The slots are validated at ``mj_resetData``, which the compiler also runs, and re-read every step.
+A tendon shorter than ``0.05 * l_opt`` is treated as rigid, as for the other two models; the
+parallel element then acts on ``l_ce = l_MTU - l_slack`` directly.
+
 .. _mtuDifferences:
 
 Deliberate differences from the source models

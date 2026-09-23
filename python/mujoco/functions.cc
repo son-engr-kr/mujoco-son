@@ -1263,6 +1263,7 @@ PYBIND11_MODULE(_functions, pymodule) {
   Def<traits::mju_compliantMuscleInvFvce0>(pymodule);
   Def<traits::mju_compliantMuscleFlce0>(pymodule);
   Def<traits::mju_compliantMuscleFp0>(pymodule);
+  Def<traits::mju_compliantMuscleFpe0>(pymodule);
   Def<traits::mju_compliantMuscleFp0Ext>(pymodule);
   Def<traits::mju_compliantMuscleInit>(pymodule);
   Def<traits::mju_compliantMuscleActDot>(pymodule);

@@ -1219,6 +1219,7 @@ MJAPI mjtNum mju_muscleDynamics(mjtNum ctrl, mjtNum act, const mjtNum prm[3]);
 MJAPI mjtNum mju_compliantMuscleInvFvce0(mjtNum f_vce0, mjtNum K, mjtNum N);
 MJAPI mjtNum mju_compliantMuscleFlce0(mjtNum l_ce0, mjtNum w, mjtNum c);
 MJAPI mjtNum mju_compliantMuscleFp0(mjtNum l0, mjtNum e_ref);
+MJAPI mjtNum mju_compliantMuscleFpe0(mjtNum l0, mjtNum rest, mjtNum e_ref);
 MJAPI mjtNum mju_compliantMuscleFp0Ext(mjtNum l0, mjtNum e_ref, mjtNum e_ref2);
 
 // Compliant muscle state management. The actuator carries two activation variables,

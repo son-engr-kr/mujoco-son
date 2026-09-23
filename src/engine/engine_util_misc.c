@@ -1554,9 +1554,25 @@ mjtNum mju_compliantMuscleFlce0(mjtNum l_ce0, mjtNum w, mjtNum c) {
 //     else:
 //         f_p0 = 0
 //     return f_p0
+// The engine uses it for the series elastic element only; the parallel element goes through
+// mju_compliantMuscleFpe0, which also takes the element's slack length.
 mjtNum mju_compliantMuscleFp0(mjtNum l0, mjtNum e_ref) {
   if (l0 > 1.0) {
     mjtNum x = (l0 - 1.0) / e_ref;
+    return x * x;
+  }
+  return 0.0;
+}
+
+
+// passive force for the parallel elastic element, with its own slack length `rest` (in l_opt)
+// and reference strain `e_ref`:  f_pe0 = ((l0 - rest)/e_ref)^2 for l0 > rest, else 0.
+// Geyer & Herr 2010's element is rest = 1, e_ref = W, and for that pair this is
+// mju_compliantMuscleFp0(l0, W) operation for operation, so a model that does not declare its
+// own element evaluates bit-identically to one built before the element could be declared.
+mjtNum mju_compliantMuscleFpe0(mjtNum l0, mjtNum rest, mjtNum e_ref) {
+  if (l0 > rest) {
+    mjtNum x = (l0 - rest) / e_ref;
     return x * x;
   }
   return 0.0;
@@ -1593,6 +1609,8 @@ typedef struct {
   mjtNum N;          // Force-velocity parameter
   mjtNum K;          // Force-velocity parameter
   mjtNum E_REF;      // Reference strain
+  mjtNum L_PE0;      // Parallel element slack length, in l_opt
+  mjtNum E_REF_PE;   // Parallel element reference strain
 } mjCompliantMuscleParams;
 
 
@@ -1620,6 +1638,45 @@ void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
   params->K = gainprm[7];
   params->E_REF = gainprm[8];
 
+  // Parallel elastic element: slack length and reference strain. Zero in both slots is
+  // Geyer & Herr 2010's element -- slack at l_opt, reference strain W -- which is what every
+  // model written before these slots existed means. mju_compliantMuscleCheckParams guarantees
+  // the slots are either both zero or both positive and finite.
+  if (gainprm[9] == 0 && gainprm[10] == 0) {
+    params->L_PE0 = 1.0;
+    params->E_REF_PE = params->W;
+  } else {
+    params->L_PE0 = gainprm[9];
+    params->E_REF_PE = gainprm[10];
+  }
+}
+
+
+// Fail loudly on a gainprm the model does not define. Called from mju_compliantMuscleInit, i.e.
+// at mj_resetData, which the compiler also runs, so a bad model fails to load.
+//
+// Slots 9 and 10 are the parallel element's own slack length and reference strain. They only
+// mean something together, so exactly one of them set is rejected rather than completed with a
+// default. Nothing reads slots 11-31: a value there is a modelling mistake or a model written
+// for a newer build, and ignoring it would run a different muscle from the one declared.
+static void mju_compliantMuscleCheckParams(const mjModel* m, int id) {
+  const mjtNum* prm = m->actuator_gainprm + mjNGAIN*id;
+
+  mjtNum rest = prm[9], e_ref = prm[10];
+  if (rest != 0 || e_ref != 0) {
+    if (!(rest > 0 && isfinite(rest)) || !(e_ref > 0 && isfinite(e_ref))) {
+      mju_error("compliant_mtu actuator %d: gainprm[9] (L_PE0) and gainprm[10] (E_REF_PE) must "
+                "both be 0, for Geyer's parallel element, or both be positive and finite; got "
+                "%g and %g", id, rest, e_ref);
+    }
+  }
+
+  for (int k = 11; k < mjNGAIN; k++) {
+    if (prm[k] != 0) {
+      mju_error("compliant_mtu actuator %d: gainprm[%d] is not a compliant_mtu parameter and "
+                "must be 0; got %g", id, k, prm[k]);
+    }
+  }
 }
 
 
@@ -1644,6 +1701,8 @@ void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
   // Initialize muscle states for user actuators only (nu, not na)
   for (int i = 0; i < m->nu; i++) {
     if (m->actuator_gaintype[i] == mjGAIN_COMPLIANT_MTU) {
+      mju_compliantMuscleCheckParams(m, i);
+
       // Extract muscle parameters
       mjCompliantMuscleParams params;
       mju_compliantMuscleExtractParams(m, i, &params);
@@ -1780,7 +1839,7 @@ static mjtNum mju_compliantMuscleRigidForce(
   mjtNum l_ce0 = l_ce / p->l_opt;
   mjtNum v_ce0 = v_ce / (p->l_opt * p->v_max);
 
-  mjtNum f_pe0  = mju_compliantMuscleFp0(l_ce0, p->W);      // E_REF_PE = W
+  mjtNum f_pe0  = mju_compliantMuscleFpe0(l_ce0, p->L_PE0, p->E_REF_PE);
   mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, p->W, p->C);
   mjtNum f_vce0 = mju_compliantMuscleForwardVce0(v_ce0, p->K, p->N);
 
@@ -1846,7 +1905,8 @@ static void mju_compliantMuscleSolveSteadyState(
   mjtNum W = params->W;
   mjtNum C = params->C;
   mjtNum E_REF = params->E_REF;
-  mjtNum E_REF_PE = W;
+  mjtNum L_PE0 = params->L_PE0;
+  mjtNum E_REF_PE = params->E_REF_PE;
 
   // Heuristic: if current l_ce is unphysical, reset to l_opt
   if (l_ce_curr > l_mtu) l_ce_curr = l_mtu - l_slack; 
@@ -1867,7 +1927,7 @@ static void mju_compliantMuscleSolveSteadyState(
     mjtNum l_se0 = l_se / l_slack;
     
     mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
-    mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
+    mjtNum f_pe0 = mju_compliantMuscleFpe0(l_ce0, L_PE0, E_REF_PE);
     mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
     // f_vce0 = 1.0 when v_ce = 0 (isometric)
     mjtNum f_ce0 = A * f_lce0; 
@@ -1887,7 +1947,7 @@ static void mju_compliantMuscleSolveSteadyState(
     mjtNum l_se0_p = l_se_p / l_slack;
     
     mjtNum f_se0_p = mju_compliantMuscleFp0(l_se0_p, E_REF);
-    mjtNum f_pe0_p = mju_compliantMuscleFp0(l_ce0_p, E_REF_PE);
+    mjtNum f_pe0_p = mju_compliantMuscleFpe0(l_ce0_p, L_PE0, E_REF_PE);
     mjtNum f_lce0_p = mju_compliantMuscleFlce0(l_ce0_p, W, C);
     mjtNum f_ce0_p = A * f_lce0_p;
     
@@ -1950,7 +2010,8 @@ static int mju_compliantMuscleNewtonStep(
   mjtNum K = params->K;
   mjtNum N = params->N;
   mjtNum E_REF = params->E_REF;
-  mjtNum E_REF_PE = W;
+  mjtNum L_PE0 = params->L_PE0;
+  mjtNum E_REF_PE = params->E_REF_PE;
 
   int converged = 0;
   int iter = 0;
@@ -1980,7 +2041,7 @@ static int mju_compliantMuscleNewtonStep(
     mjtNum v_ce0 = v_ce_curr / (l_opt * params->v_max);
 
     mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
-    mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
+    mjtNum f_pe0 = mju_compliantMuscleFpe0(l_ce0, L_PE0, E_REF_PE);
     mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
     mjtNum f_vce0 = mju_compliantMuscleForwardVce0(v_ce0, K, N);
 
@@ -2011,7 +2072,7 @@ static int mju_compliantMuscleNewtonStep(
     mjtNum v_ce0_p = v_ce_p / (l_opt * params->v_max);
 
     mjtNum f_se0_p = mju_compliantMuscleFp0(l_se0_p, E_REF);
-    mjtNum f_pe0_p = mju_compliantMuscleFp0(l_ce0_p, E_REF_PE);
+    mjtNum f_pe0_p = mju_compliantMuscleFpe0(l_ce0_p, L_PE0, E_REF_PE);
     mjtNum f_lce0_p = mju_compliantMuscleFlce0(l_ce0_p, W, C);
     mjtNum f_vce0_p = mju_compliantMuscleForwardVce0(v_ce0_p, K, N);
 
