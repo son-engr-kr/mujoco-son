@@ -1249,20 +1249,50 @@ TEST_F(MuscleMtuTest, HyfydyRejectsCurveShapeParameters) {
 }
 
 
+// OpenSim's damped model sets the force-velocity curve's two at-vmax slopes to 0 whenever the fiber
+// is damped, and only logs it. A declared non-zero slope with damping is refused rather than
+// silently replaced; the undamped model (negative fiber_damping) keeps them.
+TEST_F(MuscleMtuTest, DampedModelRefusesNonzeroSlopesAtVmax) {
+  struct Case { const char* name; const char* prm; bool loads; };
+  const Case cases[] = {
+      {"concentric, default damping", "3000 0.15 0.15 10 0 0 0 0 " "0 0 0 0 0 0 0 0 0 0 0 0 "
+                                      "0 0 0 0 " "0 0.2", false},
+      {"eccentric, explicit damping", "3000 0.15 0.15 10 0 0.05 0 0 " "0 0 0 0 0 0 0 0 0 0 0 0 "
+                                      "0 0 0 0 " "0 0 0 0 0.1", false},
+      {"both, undamped",              "3000 0.15 0.15 10 0 -1 0 0 " "0 0 0 0 0 0 0 0 0 0 0 0 "
+                                      "0 0 0 0 " "0 0.2 0 0 0.1", true},
+      {"zero slopes, damped",         "3000 0.15 0.15 10 0 0.1", true}};
+  for (const Case& c : cases) {
+    char error[1024] = "";
+    mjModel* model = LoadModelFromString(HangingMuscle("millard_mtu", c.prm), error,
+                                         sizeof(error));
+    if (c.loads) {
+      EXPECT_THAT(model, ::testing::NotNull()) << c.name << ": " << error;
+    } else {
+      EXPECT_THAT(model, ::testing::IsNull()) << c.name;
+      EXPECT_THAT(std::string(error), ::testing::HasSubstr("must be 0 with fiber damping"))
+          << c.name;
+    }
+    if (model) mj_deleteModel(model);
+  }
+}
+
+
 // ------------------------------------------------------------------------------------------
 // Active force-length curves fitted to Thelen2003, where min_norm_active_fiber_length goes to 0.
 
 // Slots 8-31 of jinsimul's Millard fit to Lumbar_C_210's Thelen curves
-// (data/muscle_fit/millard_thelen_lumbar210.json, block), with minimum_value (0.0074) replaced by
-// the 0 that slot 12 requires. `afl` is slots 8-11.
+// (data/muscle_fit/millard_thelen_lumbar210.json, block), with minimum_value (0.0074),
+// concentric_slope_at_vmax (0.234) and eccentric_slope_at_vmax (0.126) replaced by the 0 that
+// OpenSim's damped model forces and slots 12, 25 and 28 therefore require. `afl` is slots 8-11.
 std::string ThelenFitShape(const char* afl) {
   return std::string(afl) +
          " 0 0 "
          "0.04179811946585685 0.5964168220217628 0.2734354303931352 7.0483566037528895 "
          "0.6485551560379731 0 "
          "0.0329927724761894 51.63096652474981 0.2084607998115487 0.25021220733287797 "
-         "1.7430548947734776 0.23443518268326335 0.275657413457181 5.265654631839498 "
-         "0.12602000033028238 0.1260428439362502 0.5546747462355381 0.8464541431020638";
+         "1.7430548947734776 0 0.275657413457181 5.265654631839498 "
+         "0 0.1260428439362502 0.5546747462355381 0.8464541431020638";
 }
 constexpr char kThelenFitAfl[] =
     "3.531853309691377e-10 1.4309121738647031e-09 2.1913352613858628 0.9209090308901695";

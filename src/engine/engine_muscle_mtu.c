@@ -420,6 +420,14 @@ static void mtuCheckParams(const mjModel* m, int id, const mjMtuParams* p) {
     // Millard2012EquilibriumMuscle forces to 0 for the damped model this implements
     mju_error("millard_mtu actuator %d: gainprm[12], [13] and [19] are reserved and must be 0",
               id);
+  } else if (p->beta > 0 && (prm[mjMTU_FV_DYDXC] != 0 || prm[mjMTU_FV_DYDXE] != 0)) {
+    // With fiber damping, Millard2012EquilibriumMuscle's damped model sets both at-vmax slopes of
+    // the force-velocity curve to 0, whatever the file says, and only logs that it did. Doing the
+    // same silently would run a curve other than the one declared, so refuse it instead.
+    mju_error("millard_mtu actuator %d: gainprm[25] (concentric_slope_at_vmax) and gainprm[28] "
+              "(eccentric_slope_at_vmax) must be 0 with fiber damping, as OpenSim's damped model "
+              "sets them; got %g and %g. A negative gainprm[5] selects the undamped model",
+              id, prm[mjMTU_FV_DYDXC], prm[mjMTU_FV_DYDXE]);
   }
 
   if (m->actuator_trntype[id] != mjTRN_TENDON && m->actuator_trntype[id] != mjTRN_JOINT &&

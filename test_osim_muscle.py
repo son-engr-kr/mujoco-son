@@ -370,6 +370,15 @@ def test_compliant_buffer_element_holds_a_fiber_with_a_slack_tendon():
     assert f_be == pytest.approx(f_l, abs=1e-6)
 
 
+def test_millard_damped_model_refuses_slopes_at_vmax():
+    """OpenSim's damped model sets both at-vmax force-velocity slopes to 0; declaring one
+    with damping is refused, and the undamped model keeps them."""
+    with pytest.raises(ValueError, match='must be 0 with fiber damping'):
+        mujoco.MjModel.from_xml_string(_model_xml('millard_mtu', _gainprm({FV_DYDXC: 0.2})))
+    undamped = _gainprm({BETA: -1.0, FV_DYDXC: 0.2, FV_DYDXE: 0.1})
+    mujoco.MjModel.from_xml_string(_model_xml('millard_mtu', undamped))
+
+
 def test_millard_rejects_a_collapsed_ascending_limb():
     """jinsimul's Millard fit to Thelen2003 puts transition - min at 1.1e-9; OpenSim needs
     every active-curve knot gap above sqrt(eps), and refuses the shape itself."""

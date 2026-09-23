@@ -213,6 +213,11 @@ Notes on individual parameters:
    from zero. It is a well-posedness condition, not a decoration. It is also what lets an inactive
    muscle be a damper: the term is not scaled by activation.
 
+   With damping, ``concentric_slope_at_vmax`` and ``eccentric_slope_at_vmax`` (slots 25 and 28)
+   must be 0. OpenSim's damped model sets both to 0 whatever the file declares and only logs that
+   it did; here a non-zero value is refused at load instead of being replaced. The undamped model
+   keeps them.
+
 ``min_norm_active_fiber_length`` (slot 8)
    Zero means OpenSim's 0.4441 here as in every other slot, so a fit that drives this toward
    zero, as fits to ``Thelen2003Muscle`` curves do, has to write a small positive number. That

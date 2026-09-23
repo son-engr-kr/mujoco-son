@@ -97,6 +97,15 @@ spends 39 of 4,000 steps within 0.01 of the kink, and the step stops at up to 1.
 The grid starts fibers far from equilibrium on purpose, so its `v0` distribution says how each
 curve behaves when pushed, not how often real motion goes past `v_max`.
 
+### Changed: `millard_mtu` refuses at-vmax slopes under fiber damping (E5)
+
+With fiber damping, OpenSim's `Millard2012EquilibriumMuscle` sets `concentric_slope_at_vmax` and
+`eccentric_slope_at_vmax` to 0 whatever the file declares, and only logs it
+(`Millard2012EquilibriumMuscle.cpp`, the damped-model branch of `buildMuscle`). The engine used them
+as given. A non-zero slot 25 or 28 with damping now fails the load; the undamped model (negative
+`gainprm[5]`) keeps them. None of the 312 fitted muscles in `mujoco-compliant-muscles` sets either.
+jinsimul's Thelen fit (0.234 and 0.126) is the case this catches.
+
 ## v3.3.3+son4.0a7 — alpha
 
 ### Added: `compliant_mtu` parallel element with its own slack length and reference strain
