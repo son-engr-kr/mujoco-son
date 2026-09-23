@@ -1696,6 +1696,16 @@ static int mju_compliantMuscleIsRigid(const mjCompliantMuscleParams* p) {
 }
 
 
+// Positivity guard on the fiber length, as a fraction of l_opt. It is not a physical limit: the
+// buffer element is what stops a fiber collapsing, and the guard has to stay below wherever that
+// element can hold it. The element's rest length is (1 - W) l_opt, which a W fitted to a
+// Thelen-sourced active curve (0.92-0.99) puts at 0.01-0.08 l_opt -- under a millimetre on a
+// short fiber, which is why the absolute 1 mm clamp this replaced could engage first. The guard
+// binds only where the buffer element cannot hold the fiber above zero: W >= 1, where the element
+// is off, or W close to 1 at high activation.
+static const mjtNum kFiberGuardRatio = 1e-6;
+
+
 // Initialize compliant muscle states (based on Python reset function)
 void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
   // Initialize muscle states for user actuators only (nu, not na)
@@ -1821,24 +1831,50 @@ static mjtNum mju_compliantMuscleForwardVce0Deriv(mjtNum v_ce0, mjtNum K, mjtNum
 }
 
 
+// Geyer & Herr 2010's force balance (Appendix II), normalized by F_max:
+//
+//   R = f_se + f_be - f_v (f_pe + A f_l),
+//
+// i.e. F_se = F_ce + F_pe - F_be with F_pe = F_max f_pe f_v. The velocity scales the parallel
+// element as well as the contractile element, which is the paper's choice and Song's
+// f_vce0 = (f_se0 + f_be0)/(f_pe0 + A*f_lce0) (seungmoon_muscle.py). The buffer element resists
+// compression below l_opt - w with reference compression w/2; those are the paper's and stay tied
+// to W whether or not the parallel element declares its own. v_ce0 = 0 gives the isometric
+// residual, since f_v(0) is exactly 1.
+static mjtNum mju_compliantMuscleResidual(mjtNum A, mjtNum l_ce, mjtNum l_mtu, mjtNum v_ce0,
+                                          const mjCompliantMuscleParams* p) {
+  mjtNum l_ce0 = l_ce / p->l_opt;
+  mjtNum f_se0 = mju_compliantMuscleFp0((l_mtu - l_ce) / p->l_slack, p->E_REF);
+  mjtNum f_be0 = mju_compliantMuscleFp0Ext(l_ce0, 0.5*p->W, 1 - p->W);
+  mjtNum f_pe0 = mju_compliantMuscleFpe0(l_ce0, p->L_PE0, p->E_REF_PE);
+  mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, p->W, p->C);
+  mjtNum f_vce0 = mju_compliantMuscleForwardVce0(v_ce0, p->K, p->N);
+  return f_se0 + f_be0 - f_vce0*(f_pe0 + A*f_lce0);
+}
+
+
 // Rigid-tendon muscle force. For a tendon with negligible slack length the
 // series-elastic stretch is negligible against the fiber's operating range,
 // so the fiber takes the whole MTU length change: l_ce = l_mtu - l_slack and
 // v_ce = v_mtu. This avoids the singular l_se / l_slack normalization and the
 // equilibrium solve entirely. A rigid tendon transmits the fiber force
-// unchanged, so the MTU force is the fiber force
-// F_max * (f_pe0 + A*f_lce0*f_vce0). Returns tensile MTU force (same sign
-// convention as the compliant path) and, when the out pointers are non-NULL,
-// the implied fiber length and velocity.
+// unchanged, so the MTU force is the fiber force of Geyer & Herr 2010,
+// F_max * (f_vce0*(f_pe0 + A*f_lce0) - f_be0), floored at zero: a tendon cannot
+// push, so where the buffer element outweighs the fiber's pull the tendon goes
+// slack and carries nothing -- as millard_mtu's rigid path saturates at zero,
+// and as the compliant path's F_max*f_se0 is never negative. Returns tensile MTU
+// force and, when the out pointers are non-NULL, the implied fiber length and
+// velocity.
 static mjtNum mju_compliantMuscleRigidForce(
     mjtNum A, mjtNum l_mtu, mjtNum v_mtu,
     const mjCompliantMuscleParams* p,
     mjtNum* l_ce_out, mjtNum* v_ce_out) {
-  mjtNum l_ce  = mju_max(0.001, l_mtu - p->l_slack);  // fiber takes all length
+  mjtNum l_ce  = mju_max(kFiberGuardRatio * p->l_opt, l_mtu - p->l_slack);
   mjtNum v_ce  = v_mtu;                               // tendon length is constant
   mjtNum l_ce0 = l_ce / p->l_opt;
   mjtNum v_ce0 = v_ce / (p->l_opt * p->v_max);
 
+  mjtNum f_be0  = mju_compliantMuscleFp0Ext(l_ce0, 0.5*p->W, 1 - p->W);
   mjtNum f_pe0  = mju_compliantMuscleFpe0(l_ce0, p->L_PE0, p->E_REF_PE);
   mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, p->W, p->C);
   mjtNum f_vce0 = mju_compliantMuscleForwardVce0(v_ce0, p->K, p->N);
@@ -1846,7 +1882,7 @@ static mjtNum mju_compliantMuscleRigidForce(
   if (l_ce_out) *l_ce_out = l_ce;
   if (v_ce_out) *v_ce_out = v_ce;
 
-  return p->F_max * (f_pe0 + A * f_lce0 * f_vce0);
+  return p->F_max * mju_max(0, f_vce0*(f_pe0 + A*f_lce0) - f_be0);
 }
 
 
@@ -1869,111 +1905,120 @@ mjtNum mju_compliantMuscleForceVel(const mjModel* m, const mjData* d, int actuat
   mjtNum A = mju_clip(d->act[activation], 0, 1);
 
   mjtNum l_mtu = d->actuator_length[actuator_id], v_mtu = d->actuator_velocity[actuator_id];
-  mjtNum l_ce = mju_max(0.001, l_mtu - p.l_slack);
+  mjtNum l_ce = mju_max(kFiberGuardRatio*p.l_opt, l_mtu - p.l_slack);
   mjtNum l_ce0 = l_ce/p.l_opt;
   mjtNum v_ce0 = v_mtu/(p.l_opt*p.v_max);
 
-  // F = F_max*(f_pe0 + A*f_lce0*f_vce0(v0)), v0 = v_mtu/(l_opt*v_max); actuator force is -F
+  // F = F_max*max(0, f_vce0(v0)*(f_pe0 + A*f_lce0) - f_be0), v0 = v_mtu/(l_opt*v_max); the
+  // actuator force is -F. On the floor the force does not depend on velocity at all.
+  mjtNum f_be0 = mju_compliantMuscleFp0Ext(l_ce0, 0.5*p.W, 1 - p.W);
+  mjtNum f_pe0 = mju_compliantMuscleFpe0(l_ce0, p.L_PE0, p.E_REF_PE);
   mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, p.W, p.C);
+  mjtNum f_vce0 = mju_compliantMuscleForwardVce0(v_ce0, p.K, p.N);
+  if (f_vce0*(f_pe0 + A*f_lce0) - f_be0 <= 0) {
+    return 0;
+  }
   mjtNum dfv = mju_compliantMuscleForwardVce0Deriv(v_ce0, p.K, p.N);
-  return -p.F_max*A*f_lce0*dfv/(p.l_opt*p.v_max);
+  return -p.F_max*(f_pe0 + A*f_lce0)*dfv/(p.l_opt*p.v_max);
 }
 
 
-// Solve for l_ce such that the muscle is in steady-state equilibrium (v_ce = 0)
-// F_se(l_mtu - l_ce) = F_pe(l_ce) + F_ce(l_ce, 0, A)
+// Solve for l_ce such that the muscle is in isometric equilibrium (v_ce = 0):
+// F_se + F_be = F_pe + F_ce(l_ce, 0, A).
+//
+// By bracketing, not by the stepping path's Newton. Equilibration starts from the worst state
+// rather than a typical one: mj_resetData seeds l_opt, the peak of the active force-length curve,
+// and with the tendon slack there the residual has no slope at all. Damped Newton from that seed
+// walked into a bound on 18% of a grid over 239 muscles (232 own-parallel-element fits and Geyer &
+// Herr's seven). The residual is continuous, positive at the guard -- the tendon stretched
+// furthest, the buffer element compressed -- and negative at l_mtu, where the tendon has gone
+// slack, so a root lies between; Newton is used where it lands inside the bracket and bisection
+// where it does not.
+//
+// At zero activation every length where the tendon is slack and the parallel and buffer elements
+// are both unloaded is an equilibrium. The solve then returns the shortest such length, the limit
+// of the solution as the activation goes to zero, by bisecting past a zero residual that has no
+// slope. It never reads the incoming fiber length, so it is a function of the pose and the
+// activation alone, as mju_mtuMuscleEquilibrate is.
 static void mju_compliantMuscleSolveSteadyState(
     mjtNum A,
     mjtNum* l_ce,
     mjtNum l_mtu,
     const mjCompliantMuscleParams* params) {
-    
+
   // Rigid-tendon fallback: a negligible free tendon makes the series-elastic
   // normalization (l_se / l_slack) singular and stalls this solver. Treat the
   // tendon as rigid and assign the fiber length algebraically.
   if (mju_compliantMuscleIsRigid(params)) {
-    *l_ce = mju_max(0.001, l_mtu - params->l_slack);
+    *l_ce = mju_max(kFiberGuardRatio * params->l_opt, l_mtu - params->l_slack);
     return;
   }
 
-  const int max_iterations = 100;
   const mjtNum tolerance = 1e-6;
+  mjtNum eps = 1e-5 * params->l_opt;                // finite-difference step
+  mjtNum lo = kFiberGuardRatio * params->l_opt;
+  mjtNum hi = l_mtu - kFiberGuardRatio * params->l_opt;
 
-  mjtNum l_ce_curr = *l_ce;
-  mjtNum l_opt = params->l_opt;
-  mjtNum l_slack = params->l_slack;
-  mjtNum W = params->W;
-  mjtNum C = params->C;
-  mjtNum E_REF = params->E_REF;
-  mjtNum L_PE0 = params->L_PE0;
-  mjtNum E_REF_PE = params->E_REF_PE;
+  // no root inside the bounds: the fiber wants to be shorter than the guard, which happens only
+  // where the buffer element cannot hold it, or longer than the path
+  if (mju_compliantMuscleResidual(A, lo, l_mtu, 0, params) <= 0) {
+    *l_ce = lo;
+    return;
+  }
+  if (mju_compliantMuscleResidual(A, hi, l_mtu, 0, params) > 0) {
+    *l_ce = hi;
+    return;
+  }
 
-  // Heuristic: if current l_ce is unphysical, reset to l_opt
-  if (l_ce_curr > l_mtu) l_ce_curr = l_mtu - l_slack; 
-  if (l_ce_curr < 0.001) l_ce_curr = l_opt;
-
-  for (int iter = 0; iter < max_iterations; iter++) {
-    mjtNum l_se = l_mtu - l_ce_curr;
-    
-    // Hard constraint for slack tendon (same as NewtonStep)
-    if (l_se < l_slack) {
-        mjtNum target_l_ce = l_mtu - l_slack;
-        if (target_l_ce < 0.001) target_l_ce = 0.001;
-        l_ce_curr = target_l_ce;
-        l_se = l_mtu - l_ce_curr;
-    }
-
-    mjtNum l_ce0 = l_ce_curr / l_opt;
-    mjtNum l_se0 = l_se / l_slack;
-    
-    mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
-    mjtNum f_pe0 = mju_compliantMuscleFpe0(l_ce0, L_PE0, E_REF_PE);
-    mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
-    // f_vce0 = 1.0 when v_ce = 0 (isometric)
-    mjtNum f_ce0 = A * f_lce0; 
-    
-    mjtNum residual = f_se0 - (f_pe0 + f_ce0);
-    
-    if (mju_abs(residual) < tolerance) {
+  // R(lo) > 0 >= R(hi) from here on, and every update keeps it so: the bracket closes on a point
+  // with positive residual to its left, a stable (downward) crossing or the lower end of a band
+  mjtNum x = 0.5 * (lo + hi);
+  mjtNum step = hi - lo;
+  for (int iter = 0; iter < 200; iter++) {
+    mjtNum R = mju_compliantMuscleResidual(A, x, l_mtu, 0, params);
+    if (mju_abs(R) < tolerance &&
+        (R > 0 || mju_compliantMuscleResidual(A, x - 1e-8 * params->l_opt, l_mtu, 0, params) > 0)) {
       break;
     }
-    
-    // Finite difference Jacobian
-    mjtNum eps = 1e-5 * l_opt;
-    mjtNum l_ce_p = l_ce_curr + eps;
-    mjtNum l_se_p = l_mtu - l_ce_p;
-    
-    mjtNum l_ce0_p = l_ce_p / l_opt;
-    mjtNum l_se0_p = l_se_p / l_slack;
-    
-    mjtNum f_se0_p = mju_compliantMuscleFp0(l_se0_p, E_REF);
-    mjtNum f_pe0_p = mju_compliantMuscleFpe0(l_ce0_p, L_PE0, E_REF_PE);
-    mjtNum f_lce0_p = mju_compliantMuscleFlce0(l_ce0_p, W, C);
-    mjtNum f_ce0_p = A * f_lce0_p;
-    
-    mjtNum residual_p = f_se0_p - (f_pe0_p + f_ce0_p);
-    
-    mjtNum J = (residual_p - residual) / eps;
-    
-    if (mju_abs(J) < 1e-6) J = (J < 0 ? -1e-6 : 1e-6);
-    
-    mjtNum delta = -residual / J;
-    l_ce_curr += 0.8 * delta; // Damping
-    
-    // Clamps
-    if (l_ce_curr < 0.001) l_ce_curr = 0.001;
-    if (l_ce_curr > l_mtu - 0.001) l_ce_curr = l_mtu - 0.001;
+    if (R > 0) {
+      lo = x;
+    } else {
+      hi = x;
+    }
+
+    // Bisect where Newton leaves the bracket, has no slope, or is not converging. A step that is
+    // not under a quarter of the previous one is Newton creeping up a zero-slope onset -- the upper
+    // edge of a band of zero residual -- rather than closing on a root.
+    mjtNum dR = (mju_compliantMuscleResidual(A, x + eps, l_mtu, 0, params) - R) / eps;
+    mjtNum newton = dR != 0 ? -R / dR : 0;
+    mjtNum next = x + newton;
+    if (dR == 0 || !(next > lo && next < hi) || mju_abs(newton) > 0.25 * mju_abs(step)) {
+      next = 0.5 * (lo + hi);
+    }
+    if (next == x) {
+      break;                                        // the bracket is down to one value
+    }
+    step = next - x;
+    x = next;
   }
-  
-  *l_ce = l_ce_curr;
+  *l_ce = x;
 }
 
-// ODE15s-style stiff solver integration step for muscle dynamics
-// This is a simplified stiff solver similar to MATLAB's ode15s, suitable for stiff muscle dynamics
-// Uses backward Euler with under-relaxed fixed-point iteration to solve: y_{n+1} = y_n + dt * f(t_{n+1}, y_{n+1})
-// Note: Full ODE15s uses variable-order NDFs; this is a simplified backward Euler approximation
-// Integrates contractile element length (l_ce) only
-// Activation (A) is updated separately by MuJoCo's nextActivation() using act_dot
+
+// One backward-Euler step of the fiber: Newton on R(l_ce) = 0, R Geyer & Herr 2010's force
+// balance (mju_compliantMuscleResidual) with v_ce = (l_ce - l_ce_prev)/dt, warm-started from
+// l_ce_prev, with a finite-difference Jacobian. The activation is held at A; MuJoCo integrates it
+// separately from act_dot. Returns the number of iterations taken.
+//
+// The fiber is free on (guard, l_mtu - guard): nothing here stops the tendon going slack. An
+// earlier version projected every iterate back to l_se >= l_slack, which made the tendon push --
+// it held a slack tendon at exactly its slack length -- and was the only thing keeping an active
+// fiber from collapsing. That is the buffer element's job, and with the element in the residual a
+// slack tendon has a root of its own, where it balances the fiber's pull.
+//
+// The bounds keep l_ce and l_se positive and nothing more. An iterate pushed against one stays
+// there, and the solve stops once a step can no longer move it: that is the constrained solution,
+// where the fiber wants to go further than it can.
 static int mju_compliantMuscleNewtonStep(
     mjtNum A,                               // Current activation (constant)
     mjtNum* l_ce,                           // Contractile element length - modified in place
@@ -1987,126 +2032,44 @@ static int mju_compliantMuscleNewtonStep(
   // normalization (l_se / l_slack) singular and stalls this solver. Treat the
   // tendon as rigid: the fiber takes all length change, so v_ce = v_mtu.
   if (mju_compliantMuscleIsRigid(params)) {
-    *l_ce = mju_max(0.001, l_mtu - params->l_slack);
+    *l_ce = mju_max(kFiberGuardRatio * params->l_opt, l_mtu - params->l_slack);
     *v_ce = v_mtu;
     return 0;
   }
 
-  const int max_iterations = 50;          // Max fixed-point iterations
-  const mjtNum tolerance = 1e-5;          // Convergence tolerance
+  const int max_iterations = 50;
+  const mjtNum tolerance = 1e-5;
+  mjtNum lo = kFiberGuardRatio * params->l_opt;
+  mjtNum hi = l_mtu - kFiberGuardRatio * params->l_opt;
+  mjtNum eps = 1e-5 * params->l_opt;                // finite-difference step
+  mjtNum dtv = dt * params->l_opt * params->v_max;  // l_ce change per unit normalized velocity
 
-  // Use Newton-Raphson to solve for l_ce that satisfies force balance:
-  // F_se(l_mtu - l_ce) = F_pe(l_ce) + F_ce(l_ce, v_ce, A)
-  // where v_ce = (l_ce - l_ce_prev) / dt  (Backward Euler)
-
-  mjtNum l_ce_curr = *l_ce; // Initial guess
-  mjtNum l_ce_prev = *l_ce; // Previous step value (fixed)
-
-  // Extract parameters for cleaner code
-  mjtNum l_opt = params->l_opt;
-  mjtNum l_slack = params->l_slack;
-  mjtNum W = params->W;
-  mjtNum C = params->C;
-  mjtNum K = params->K;
-  mjtNum N = params->N;
-  mjtNum E_REF = params->E_REF;
-  mjtNum L_PE0 = params->L_PE0;
-  mjtNum E_REF_PE = params->E_REF_PE;
-
-  int converged = 0;
+  mjtNum l_ce_prev = *l_ce;
+  mjtNum x = mju_clip(l_ce_prev, lo, hi);
   int iter = 0;
   for (; iter < max_iterations; iter++) {
-    // --- 1. Evaluate Residual at current guess ---
-    mjtNum l_se = l_mtu - l_ce_curr;
-    mjtNum residual = 0.0;
-    
-    // HARD CONSTRAINT: Treat tendon as rigid when slack (l_se < l_slack).
-    // If the system tries to enter slack region, we force l_se = l_slack.
-    // We project the solution to the boundary but CONTINUE the iteration 
-    // to check if active forces push it further into the active region.
-    if (l_se < l_slack) {
-        mjtNum target_l_ce = l_mtu - l_slack;
-        if (target_l_ce < 0.001) target_l_ce = 0.001; // Safety min length
-        
-        // Project to boundary
-        l_ce_curr = target_l_ce;
-        l_se = l_mtu - l_ce_curr;
-    }
-
-    mjtNum l_ce0 = l_ce_curr / l_opt;
-    mjtNum l_se0 = l_se / l_slack;
-
-    // Implicit velocity from position change
-    mjtNum v_ce_curr = (l_ce_curr - l_ce_prev) / dt;
-    mjtNum v_ce0 = v_ce_curr / (l_opt * params->v_max);
-
-    mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
-    mjtNum f_pe0 = mju_compliantMuscleFpe0(l_ce0, L_PE0, E_REF_PE);
-    mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
-    mjtNum f_vce0 = mju_compliantMuscleForwardVce0(v_ce0, K, N);
-
-    mjtNum f_ce0 = A * f_lce0 * f_vce0;
-
-    // Standard Force Balance
-    residual = f_se0 - (f_pe0 + f_ce0);
-
-    // Check convergence
-    if (mju_abs(residual) < tolerance) {
-      converged = 1;
+    mjtNum R = mju_compliantMuscleResidual(A, x, l_mtu, (x - l_ce_prev) / dtv, params);
+    if (mju_abs(R) < tolerance) {
       break;
     }
 
-    // --- 2. Compute Jacobian via Finite Difference ---
-    mjtNum eps = 1e-5 * l_opt; // Small perturbation
-    mjtNum l_ce_pert = l_ce_curr + eps;
-
-    mjtNum l_se_p = l_mtu - l_ce_pert;
-    // If perturbation enters slack, handle it? 
-    // Generally we assume perturbation stays in same regime, 
-    // but for safety we can use normal physics or same constraint.
-    // Here we just compute physics Jacobian assuming continuity locally.
-    
-    mjtNum l_ce0_p = l_ce_pert / l_opt;
-    mjtNum l_se0_p = l_se_p / l_slack;
-    mjtNum v_ce_p = (l_ce_pert - l_ce_prev) / dt;
-    mjtNum v_ce0_p = v_ce_p / (l_opt * params->v_max);
-
-    mjtNum f_se0_p = mju_compliantMuscleFp0(l_se0_p, E_REF);
-    mjtNum f_pe0_p = mju_compliantMuscleFpe0(l_ce0_p, L_PE0, E_REF_PE);
-    mjtNum f_lce0_p = mju_compliantMuscleFlce0(l_ce0_p, W, C);
-    mjtNum f_vce0_p = mju_compliantMuscleForwardVce0(v_ce0_p, K, N);
-
-    mjtNum f_ce0_p = A * f_lce0_p * f_vce0_p;
-    
-    mjtNum residual_p = f_se0_p - (f_pe0_p + f_ce0_p);
-
-    mjtNum J = (residual_p - residual) / eps;
-
-    // --- 3. Newton Update ---
-    // Avoid division by zero or extremely small gradients
+    mjtNum R_p = mju_compliantMuscleResidual(A, x + eps, l_mtu, (x + eps - l_ce_prev) / dtv,
+                                             params);
+    mjtNum J = (R_p - R) / eps;
     if (mju_abs(J) < 1e-6) {
-        J = (J < 0) ? -1e-6 : 1e-6;
+      J = (J < 0) ? -1e-6 : 1e-6;
     }
 
-    mjtNum delta = -residual / J;
-    
-    // Damped update for stability (especially with stiff non-linearities)
-    l_ce_curr += 0.8 * delta;
-
-    // Clamp to valid range
-    if (l_ce_curr < 0.001) l_ce_curr = 0.001;
-    // Ensure l_se doesn't go negative (though solver should handle slack)
-    if (l_ce_curr > l_mtu - 0.001) l_ce_curr = l_mtu - 0.001; 
-  }
-  
-  if (!converged) {
-    // If Newton failed, fallback or warn. For now, just keep last guess.
+    // damped for stability against the stiff non-linearities
+    mjtNum next = mju_clip(x - 0.8 * R / J, lo, hi);
+    if (next == x) {
+      break;                              // pinned against a bound it is being pushed into
+    }
+    x = next;
   }
 
-  // Final update
-  *l_ce = l_ce_curr;
-  *v_ce = (*l_ce - l_ce_prev) / dt;
-
+  *l_ce = x;
+  *v_ce = (x - l_ce_prev) / dt;
   return iter;
 }
 

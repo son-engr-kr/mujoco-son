@@ -95,9 +95,9 @@ Do this whenever the pose was **set** rather than integrated: after a reset, aft
 keyframe, after editing ``qpos``. Without it the first step simply takes one bounded fiber
 excursion to recover; nothing becomes unstable, the initial force is just not the equilibrium one.
 
-The equilibration is a **function of the pose and the activation only** — it does not use the
-fiber length it finds in ``act``, so two calls at the same pose give the same answer bit for bit
-whatever the fiber was doing beforehand. It solves the isometric residual by bracketing rather
+The equilibration is a **function of the pose and the activation only**, for all three models: it
+does not use the fiber length it finds in ``act``, so two calls at the same pose give the same
+answer bit for bit whatever the fiber was doing beforehand. It solves the isometric residual by bracketing rather
 than by the Newton the stepping path uses, because the state it starts from is the worst case
 rather than a typical one: ``mj_resetData`` seeds ``optimal_fiber_length``, which is the peak of
 the active force-length curve, and with no timestep the fiber damping drops out of the Jacobian.
@@ -314,16 +314,39 @@ a default in slots 0-8: each is used as written.
      - must be 0
      -
 
-The elements are
+The force balance is Geyer & Herr 2010's (Appendix II), :math:`F_{SE} = F_{CE} + F_{PE} - F_{BE}`
+with the parallel element scaled by the force-velocity relation, :math:`F_{PE} \propto f_V`:
+
+.. math::
+
+   f_{SE} + f_{BE} = f_V(\hat v)\,\left(f_{PE} + a\, f_L\right)
 
 .. math::
 
    f_{SE} = \left(\frac{l_{se}/l_{slack} - 1}{E_{REF}}\right)^2, \qquad
-   f_{PE} = \left(\frac{l_{ce}/l_{opt} - L_{PE0}}{E_{REF,PE}}\right)^2, \qquad
-   f_L = \exp\!\left(C \left|\frac{l_{ce}/l_{opt} - 1}{W}\right|^3\right),
+   f_{PE} = \left(\frac{\hat l - L_{PE0}}{E_{REF,PE}}\right)^2, \qquad
+   f_{BE} = \left(\frac{\hat l - (1 - W)}{W/2}\right)^2, \qquad
+   f_L = \exp\!\left(C \left|\frac{\hat l - 1}{W}\right|^3\right),
 
-the two quadratics zero below their slack lengths, and the fiber solves
-:math:`f_{SE} = f_{PE} + a\, f_L f_V`.
+with :math:`\hat l = l_{ce}/l_{opt}`. The series and parallel elements are zero below their slack
+lengths, and the buffer element above its rest length ``l_opt - w``, so it only resists compression.
+Its rest length and reference compression ``w/2`` are the paper's and stay tied to ``W`` even when the
+parallel element declares its own. :math:`f_V` is Song's (``seungmoon_muscle.py``), including its
+third region ``N + 100 (v - 1)`` past ``v_max``.
+
+**The tendon may go slack.** Nothing holds it at its slack length, since a tendon cannot push. With
+the tendon slack an active fiber shortens until the buffer element balances it, which is the job the
+paper gives that element ("prevents the active CE from collapsing if the SE is slack", Fig. 6). The
+fiber length is kept positive by a guard at ``1e-6 * l_opt``, which is not a physical limit. It binds
+only where the buffer element cannot hold the fiber. With ``W >= 1`` the element is off. With ``W``
+above about 0.93, as fits to Thelen-sourced curves give, its rest length is so close to zero that an
+active fiber reaches the guard first. The threshold is ``W`` = 0.929 at full activation, 0.944 at
+half and 0.960 at a fifth. The fiber then carries no force through the slack tendon.
+
+At zero activation a range of lengths is in equilibrium: the tendon is slack and the parallel and
+buffer elements are unloaded. Equilibration then returns the shortest such length, which is the
+limit of the solution as the activation goes to zero, and the stepping solve leaves the fiber where
+it is.
 
 **The parallel element may carry its own slack length and reference strain** (slots 9 and 10),
 for a muscle whose passive curve was fitted to a source model's rather than tied to ``W``. The two
@@ -333,8 +356,9 @@ and finite. One without the other, a negative or non-finite value, or anything n
 11-31 fails the load. A build that ignored them would run a different muscle from the one
 declared, and builds before ``son4.0a7`` do exactly that, silently.
 
-At zero activation the parallel element and the tendon are two quadratic springs in series, so
-the static passive force has a closed form, which the test suite checks the solver against:
+At zero activation and rest the parallel element and the tendon are two quadratic springs in
+series, so the static passive force has a closed form, which the test suite checks the solver
+against:
 
 .. math::
 
@@ -343,8 +367,10 @@ the static passive force has a closed form, which the test suite checks the solv
    \qquad (l_{MTU} > l_{slack} + l_{opt} L_{PE0})
 
 The slots are validated at ``mj_resetData``, which the compiler also runs, and re-read every step.
-A tendon shorter than ``0.05 * l_opt`` is treated as rigid, as for the other two models; the
-parallel element then acts on ``l_ce = l_MTU - l_slack`` directly.
+A tendon shorter than ``0.05 * l_opt`` is treated as rigid, as for the other two models. The fiber
+is then ``l_ce = l_MTU - l_slack`` and the force is
+:math:`F_{max} \max(0,\, f_V (f_{PE} + a f_L) - f_{BE})`, floored at zero because a rigid tendon
+cannot push either.
 
 .. _mtuDifferences:
 

@@ -352,6 +352,24 @@ def test_compliant_rejects_malformed_gainprm(tail, why):
         mujoco.MjModel.from_xml_string(_model_xml('compliant_mtu', _ABD_R + tail))
 
 
+def test_compliant_buffer_element_holds_a_fiber_with_a_slack_tendon():
+    """Geyer & Herr 2010: with the tendon slack the fiber sits where the buffer element
+    balances its pull, below l_opt - w, and the tendon carries nothing."""
+    sol = '4000 0.04 0.26 6 0.56 -2.995732273553991 1.5 5 0.04'
+    model = mujoco.MjModel.from_xml_string(_model_xml('compliant_mtu', sol))
+    data = mujoco.MjData(model)
+    data.qpos[0] = _HANG - 0.25                  # path shorter than the tendon
+    data.act[1] = 1.0
+    mujoco.mj_forward(model, data)
+    mujoco.mju_compliantMuscleEquilibrate(model, data)
+    l0 = data.act[0]/0.04
+    assert l0 < 1 - 0.56
+    assert data.muscle_F_mtu[0] == 0.0
+    f_be = mujoco.mju_compliantMuscleFp0Ext(l0, 0.28, 0.44)
+    f_l = mujoco.mju_compliantMuscleFlce0(l0, 0.56, -2.995732273553991)
+    assert f_be == pytest.approx(f_l, abs=1e-6)
+
+
 def test_millard_rejects_a_collapsed_ascending_limb():
     """jinsimul's Millard fit to Thelen2003 puts transition - min at 1.1e-9; OpenSim needs
     every active-curve knot gap above sqrt(eps), and refuses the shape itself."""

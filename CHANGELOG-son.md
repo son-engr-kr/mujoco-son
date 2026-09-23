@@ -3,6 +3,100 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## Unreleased
+
+**`compliant_mtu` dynamics change in this release.** Every `compliant_mtu` model moves, not just
+the ones declaring new parameters: the force balance, the slack tendon and the fiber clamps are all
+different, so results are not comparable with `son4.0a7` or earlier. An isometric equilibrium with
+the tendon taut and the fiber above the buffer element's rest length solves the same equation as
+before. Over the grid below, the 34,674 such points agree with `a7` to 1.9e-6 `F_max` in force,
+except two where `a7`'s solve had not converged (trunk `IL_L2_r` at activation 0.5 and 1, residual
+-9e-3 and -4e-2), which move by up to 3.8% `F_max`. Of the other 24,741 points, where the tendon is
+slack or the buffer element engaged, 21,286 move by more than 1e-3 `l_opt` in fiber length.
+
+### Changed: `compliant_mtu` solves Geyer & Herr 2010's force balance
+
+Geyer & Herr 2010, Appendix II: `F_m = F_se = F_ce + F_pe - F_be`, with
+`F_pe = F_max f_pe f_v(v_ce)` and a buffer element
+`F_be = F_max ((l_min - l_ce)/(l_opt eps_be))^2`, `l_min = l_opt - w`, `eps_be = w/2`. Song's
+reference implementation writes the same thing as `f_vce0 = (f_se0 + f_be0)/(f_pe0 + A*f_lce0)`
+(`seungmoon_muscle.py`). The engine solved `f_se = f_pe + A f_l f_v` instead, which is Geyer
+2003's structure, with no buffer element. The residual is now
+
+    R = f_se + f_be - f_v(v0) (f_pe + A f_l)
+
+in both the backward-Euler step and the isometric solve (`f_v(0) = 1`). The parallel element keeps
+`son4.0a7`'s own slack length and reference strain when declared; the buffer element stays tied to
+`W`, as the paper fixes it.
+
+Four things follow from it:
+
+- **The tendon may go slack.** Both solvers used to project every iterate back to
+  `l_se >= l_slack`, which held a slack tendon at exactly its slack length: a tendon pushing, and
+  the only thing that kept an active fiber from collapsing. The projection is gone, and the buffer
+  element does that job, as the paper's Fig. 6 says it does.
+- **The 1 mm fiber clamps are gone.** They were absolute, and a `W` fitted to a Thelen-sourced curve
+  (0.92-0.99) puts the buffer element's rest length at 0.01-0.08 `l_opt`, under a millimetre on a
+  short fiber, so the clamp could engage before the element. Fiber and tendon lengths are now only
+  kept positive, by a guard at `1e-6 l_opt`.
+- **The rigid-tendon path** computes `F_max max(0, f_v (f_pe + A f_l) - f_be)`, floored at zero
+  because a tendon cannot push, as `millard_mtu`'s rigid path saturates. Its velocity derivative for
+  the implicit integrators now includes the parallel element, and is zero on the floor.
+- **Equilibration brackets the root.** With the projection gone, the damped Newton it used failed
+  on 18% of a grid (below) from `mj_resetData`'s seed, the peak of the active curve, where a slack
+  tendon leaves no slope. It is now a safeguarded Newton-bisection on
+  `[1e-6 l_opt, l_mtu - 1e-6 l_opt]`, as `mju_mtuMuscleEquilibrate` became in `a6`. It no longer
+  reads the incoming fiber length, so it is a function of the pose and the activation. At zero
+  activation, where a band of lengths is in equilibrium, it returns the shortest, which is the limit
+  as the activation goes to zero.
+
+**Measured** over 239 muscles: jinsimul's 232 own-parallel-element fits (arm, full body, h1622,
+myoleg26, trunk; `W` 0.59-1.002) and Geyer & Herr's seven Table II muscles. The residual is rebuilt
+outside the engine from the public curves.
+
+- Isometric, 59,415 points (51 path lengths from `0.3 l_slack` to `l_slack + 2.2 l_opt`, five
+  activations): no failures. 54,478 converge; 4,479 sit on the guard, all with `W >= 0.93` and a
+  non-zero activation, or `W >= 1`, which is where the buffer element cannot hold the fiber (at full
+  activation the threshold is `W` = 0.929). 458 sit at the path's length. The damped Newton that
+  preceded the bracket, same residual, failed on 10,573 of these points.
+- Backward-Euler step, 139,800 points (10 path lengths, five activations, six starting fibers from
+  0.2 to 1.7 `l_opt`, `dt` 1e-3 and 2e-3): 60,380 of 60,382 converge where the step ends at
+  `v0 <= 1`, and 79,414 of 79,418 where it ends past `v_max`. The six failures are the region-3
+  question below.
+
+A fiber carrying no force now keeps its length. At zero activation, with the tendon slack and both
+the parallel and buffer elements unloaded, nothing acts on it, and the stepping solve leaves it
+where it is instead of snapping it to `l_mtu - l_slack`.
+
+Where the buffer element cannot hold an active fiber (`W` above the threshold, or `W >= 1`), the
+fiber goes to the guard and the slack tendon carries nothing. jinsimul lets the fiber go slightly
+negative instead (decision 0024 reports -0.3% `l_opt` at the collapse edge); this build does not.
+
+### Measured, not decided: `f_v` region 3 (E3)
+
+Song's `f_v` has a third region past `v_max`, `N + 100 (v0 - 1)`, and with the 2010 residual it now
+scales the parallel element too. It stays in this release. What it does, on the grid above and
+compared with a build that extends region 2 past `v0 = 1` instead (jinsimul's choice, which
+saturates at `N + 0.027`):
+
+| | region 3 (this release) | region 2 extended |
+| --- | --- | --- |
+| step failures, 139,800 points | 6 | 0 |
+| worst unconverged residual | 1,278 `F_max` | none |
+| failures within 0.01 of `v0 = 1` | 2, residual up to 3.1e-4 | none |
+| failures deep in region 3 | 4, at `v0` 7-18, residual 467-1,278 `F_max` | none |
+| converged steps past `v_max`: median / p99 `v0` | 7.6 / 98 | 37 / 159 |
+
+The four deep failures are the fiber landing where `f_v` is in the hundreds to thousands, a force no
+tendon balances. That matches jinsimul's measurement on its own engine (6 of 600 points at
+1,391 `F_max`). The kink at `v0 = 1`, where the slope jumps from 0.026 to 100, also shows up in an
+ordinary driven trajectory. A 50 kg mass held by Geyer's soleus under a sinusoidal activation
+spends 39 of 4,000 steps within 0.01 of the kink, and the step stops at up to 1.4e-5 there, over its
+1e-5 tolerance. With region 2 extended the same trajectory stays within 1e-5.
+
+The grid starts fibers far from equilibrium on purpose, so its `v0` distribution says how each
+curve behaves when pushed, not how often real motion goes past `v_max`.
+
 ## v3.3.3+son4.0a7 — alpha
 
 ### Added: `compliant_mtu` parallel element with its own slack length and reference strain

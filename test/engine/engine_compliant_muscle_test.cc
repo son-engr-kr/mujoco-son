@@ -38,7 +38,7 @@ using CompliantMuscleTest = MujocoTest;
 constexpr double kAnchor = 0.5;   // anchor height: the path length is kAnchor - qpos
 
 // A point mass hung from a single compliant_mtu muscle with gainprm `prm`.
-std::string HangingMuscle(const std::string& prm) {
+std::string HangingMuscle(const std::string& prm, double mass = 20.0) {
   return R"(
   <mujoco>
     <option timestep="0.001" gravity="0 0 -9.81"/>
@@ -47,7 +47,7 @@ std::string HangingMuscle(const std::string& prm) {
       <body name="m">
         <joint name="s" type="slide" axis="0 0 1"/>
         <site name="ins" size="0.005"/>
-        <geom type="sphere" size="0.01" mass="20"/>
+        <geom type="sphere" size="0.01" mass=")" + std::to_string(mass) + R"("/>
       </body>
     </worldbody>
     <tendon>
@@ -238,6 +238,302 @@ TEST_F(CompliantMuscleTest, OwnParallelElementOnTheRigidTendonPath) {
     mj_forward(m, d);                   // the stepping path, at rest
     EXPECT_NEAR(d->muscle_F_mtu[0], kFmax*x*x, 1e-12*kFmax) << "l_mtu=" << l_mtu;
   }
+
+  mj_deleteData(d);
+  mj_deleteModel(m);
+}
+
+
+// ------------------------------------------------------------------------------------------
+// The force balance: Geyer & Herr 2010, Appendix II.
+
+// Geyer & Herr 2010's soleus (Table II), with the paper's shared parameters.
+constexpr double kSolFmax = 4000, kSolLopt = 0.04, kSolLslack = 0.26, kSolVmax = 6;
+constexpr double kGeyerW = 0.56, kGeyerC = -2.995732273553991, kGeyerN = 1.5, kGeyerK = 5;
+constexpr double kGeyerEref = 0.04;
+const char kSol[] = "4000 0.04 0.26 6 0.56 -2.995732273553991 1.5 5 0.04";
+
+// The same muscle with a tendon short enough for the rigid-tendon path.
+constexpr double kSolLslackRigid = 0.001;
+const char kSolRigid[] = "4000 0.04 0.001 6 0.56 -2.995732273553991 1.5 5 0.04";
+
+// The forward force-velocity curve, transcribed so the tests can rebuild the residual from outside.
+// It is the analytic inverse of the public mju_compliantMuscleInvFvce0, region for region, which
+// ForwardVelocityIsTheInverseOfInvFvce0 checks.
+double Fv(double v0, double K, double N) {
+  if (v0 <= 0) return (1 + v0)/(1 - K*v0);
+  if (v0 <= 1) {
+    double t = (v0 - 1)/(7.56*K*v0 + 1);
+    return N - t/(t - 1);
+  }
+  return N + 100*(v0 - 1);
+}
+
+struct Geyer {
+  double l_opt, l_slack, W, C, N, K, E_REF, L_PE0, E_REF_PE;
+};
+constexpr Geyer kSolGeyer = {kSolLopt, kSolLslack, kGeyerW, kGeyerC, kGeyerN, kGeyerK,
+                             kGeyerEref, 1.0, kGeyerW};
+
+// Geyer & Herr 2010's force balance, f_se + f_be - f_v (f_pe + A f_l), from the public curves.
+double Residual2010(const Geyer& g, double A, double l_ce, double l_mtu, double v0) {
+  double l0 = l_ce/g.l_opt;
+  double f_se = mju_compliantMuscleFp0((l_mtu - l_ce)/g.l_slack, g.E_REF);
+  double f_be = mju_compliantMuscleFp0Ext(l0, 0.5*g.W, 1 - g.W);
+  double f_pe = mju_compliantMuscleFpe0(l0, g.L_PE0, g.E_REF_PE);
+  double f_l = mju_compliantMuscleFlce0(l0, g.W, g.C);
+  return f_se + f_be - Fv(v0, g.K, g.N)*(f_pe + A*f_l);
+}
+
+// The fiber length at which the buffer element balances a fiber with a slack tendon,
+// A f_l = f_be below l_opt - w, by bisection.
+double BufferRoot(const Geyer& g, double A) {
+  double lo = 0, hi = 1 - g.W;              // in l_opt
+  for (int i = 0; i < 200; i++) {
+    double mid = 0.5*(lo + hi);
+    double r = mju_compliantMuscleFp0Ext(mid, 0.5*g.W, 1 - g.W) -
+               A*mju_compliantMuscleFlce0(mid, g.W, g.C);
+    (r > 0 ? lo : hi) = mid;
+  }
+  return 0.5*(lo + hi)*g.l_opt;
+}
+
+
+TEST_F(CompliantMuscleTest, ForwardVelocityIsTheInverseOfInvFvce0) {
+  for (double v0 = -0.99; v0 <= 3.0; v0 += 0.01) {
+    double f = Fv(v0, kGeyerK, kGeyerN);
+    EXPECT_NEAR(mju_compliantMuscleInvFvce0(f, kGeyerK, kGeyerN), v0, 1e-12) << "v0=" << v0;
+  }
+}
+
+
+// Fig. 6 of the paper: "a buffer elasticity (BE) prevents the active CE from collapsing if the SE
+// is slack". With the path shorter than the tendon plus the buffered fiber, the tendon is slack and
+// carries nothing, and the fiber sits where the buffer element balances its pull. An earlier
+// version held the tendon at its slack length instead, which is a tendon pushing.
+TEST_F(CompliantMuscleTest, BufferElementHoldsAnActiveFiberWhenTheTendonIsSlack) {
+  mjModel* m = LoadModelFromString(HangingMuscle(kSol));
+  ASSERT_THAT(m, NotNull());
+  mjData* d = mj_makeData(m);
+
+  for (double A : {0.3, 1.0}) {
+    double l_ce_star = BufferRoot(kSolGeyer, A);
+    ASSERT_LT(l_ce_star, (1 - kGeyerW)*kSolLopt);
+    for (double l_mtu : {0.20, 0.25, kSolLslack + 0.9*l_ce_star}) {
+      Equilibrate(m, d, l_mtu, A);
+      EXPECT_EQ(d->muscle_F_mtu[0], 0.0) << "a slack tendon carries nothing, l_mtu=" << l_mtu;
+      EXPECT_NEAR(d->act[0], l_ce_star, 1e-5*kSolLopt) << "A=" << A << " l_mtu=" << l_mtu;
+      EXPECT_LT(std::fabs(Residual2010(kSolGeyer, A, d->act[0], l_mtu, 0)), 1e-6);
+    }
+  }
+
+  mj_deleteData(d);
+  mj_deleteModel(m);
+}
+
+
+// The backward-Euler step solves the paper's residual, in which f_v scales the parallel element
+// too. Checked from outside at steps that engage the element while the fiber moves: the 2010
+// residual is zero there, and the 2003 one -- f_se = f_pe + A f_l f_v, the structure this model
+// used before -- is not.
+TEST_F(CompliantMuscleTest, SteppingSolvesThe2010ResidualWithTheParallelElementScaledByFv) {
+  mjModel* m = LoadModelFromString(HangingMuscle(kSol));
+  ASSERT_THAT(m, NotNull());
+  mjData* d = mj_makeData(m);
+  const double dt = m->opt.timestep;
+
+  int engaged = 0;
+  for (double A : {0.0, 0.3, 1.0}) {
+    for (double l0_eq : {1.15, 1.3}) {
+      double l_mtu = kSolLslack*1.01 + l0_eq*kSolLopt;
+      for (double scale : {0.97, 1.03}) {
+        mj_resetData(m, d);
+        d->qpos[0] = kAnchor - l_mtu;
+        d->act[0] = scale*l0_eq*kSolLopt;
+        d->act[1] = A;
+        d->ctrl[0] = A;
+        mj_forward(m, d);
+
+        double l_ce = d->muscle_l_ce[0];
+        double v0 = d->muscle_v_ce[0]/(kSolLopt*kSolVmax);
+        ASSERT_NEAR(d->muscle_v_ce[0], (l_ce - d->act[0])/dt, 1e-9);
+        double r2010 = Residual2010(kSolGeyer, A, l_ce, l_mtu, v0);
+        EXPECT_LT(std::fabs(r2010), 1e-5) << "A=" << A << " l_mtu=" << l_mtu;
+
+        double l0 = l_ce/kSolLopt;
+        double f_pe = mju_compliantMuscleFpe0(l0, 1.0, kGeyerW);
+        double f_l = mju_compliantMuscleFlce0(l0, kGeyerW, kGeyerC);
+        double f_se = mju_compliantMuscleFp0((l_mtu - l_ce)/kSolLslack, kGeyerEref);
+        double r2003 = f_se - (f_pe + A*f_l*Fv(v0, kGeyerK, kGeyerN));
+        if (f_pe > 0.01 && std::fabs(v0) > 0.01) {
+          engaged++;
+          EXPECT_GT(std::fabs(r2003), 1e-3) << "A=" << A << " l_mtu=" << l_mtu;
+        }
+      }
+    }
+  }
+  EXPECT_GT(engaged, 4);
+
+  mj_deleteData(d);
+  mj_deleteModel(m);
+}
+
+
+// Equilibration is a function of the pose and the activation, whatever the fiber was doing. At
+// zero activation a band of lengths is in equilibrium -- tendon slack, parallel and buffer elements
+// unloaded -- and the solve takes the shortest, the limit as the activation goes to zero.
+TEST_F(CompliantMuscleTest, EquilibrateIsIndependentOfTheIncomingFiberLength) {
+  mjModel* m = LoadModelFromString(HangingMuscle(kSol));
+  ASSERT_THAT(m, NotNull());
+  mjData* d = mj_makeData(m);
+
+  auto equilibrate_from = [&](double l_mtu, double A, double start) {
+    mj_resetData(m, d);
+    d->qpos[0] = kAnchor - l_mtu;
+    d->act[0] = start;
+    d->act[1] = A;
+    mj_forward(m, d);
+    mju_compliantMuscleEquilibrate(m, d);
+    return d->act[0];
+  };
+
+  for (double A : {0.0, 0.02, 0.5, 1.0}) {
+    for (double l_mtu : {0.2, kSolLslack + 0.7*kSolLopt, kSolLslack*1.02 + 1.2*kSolLopt}) {
+      double first = equilibrate_from(l_mtu, A, 0.5*kSolLopt);
+      for (double start : {0.9*kSolLopt, 1.4*kSolLopt}) {
+        EXPECT_EQ(equilibrate_from(l_mtu, A, start), first) << "A=" << A << " l_mtu=" << l_mtu;
+      }
+    }
+  }
+
+  // the zero-activation band is [0.7, 1] l_opt here; the tendon goes slack at its lower end
+  double band = equilibrate_from(kSolLslack + 0.7*kSolLopt, 0.0, 0.9*kSolLopt);
+  EXPECT_NEAR(band, 0.7*kSolLopt, 1e-4*kSolLslack);
+  EXPECT_NEAR(d->muscle_F_mtu[0], 0.0, 1e-6*kSolFmax);
+
+  mj_deleteData(d);
+  mj_deleteModel(m);
+}
+
+
+// A rigid tendon cannot push: where the buffer element outweighs the fiber's pull the force is 0,
+// and so is its velocity derivative. Elsewhere the force is F_max f_v (f_pe + A f_l) - including the
+// parallel element under f_v -- and the derivative handed to the implicit integrators matches a
+// central difference.
+TEST_F(CompliantMuscleTest, RigidTendonForceIsFlooredAndItsVelocityDerivativeIsExact) {
+  mjModel* m = LoadModelFromString(HangingMuscle(kSolRigid));
+  ASSERT_THAT(m, NotNull());
+  mjData* d = mj_makeData(m);
+
+  auto force_at = [&](double l_mtu, double qvel, double A) {
+    mj_resetData(m, d);
+    d->qpos[0] = kAnchor - l_mtu;
+    d->qvel[0] = qvel;
+    d->act[1] = A;
+    mj_forward(m, d);
+    return d->actuator_force[0];
+  };
+
+  // buffered: l_ce = 0.3 l_opt, where f_be = 0.25 dwarfs the fiber's pull
+  double short_mtu = kSolLslackRigid + 0.3*kSolLopt;
+  EXPECT_EQ(force_at(short_mtu, 0.0, 1.0), 0.0);
+  EXPECT_EQ(d->muscle_F_mtu[0], 0.0);
+  EXPECT_EQ(mju_compliantMuscleForceVel(m, d, 0), 0.0);
+
+  // pulling, parallel element engaged (l0 = 1.3), off the f_v kink at v0 = 0
+  const double l0 = 1.3, A = 0.5;
+  double long_mtu = kSolLslackRigid + l0*kSolLopt;
+  double qvel = 0.2*kSolLopt*kSolVmax;   // shortens the path: v0 = -0.2
+  force_at(long_mtu, qvel, A);
+  double v0 = d->actuator_velocity[0]/(kSolLopt*kSolVmax);
+  double f_pe = mju_compliantMuscleFpe0(l0, 1.0, kGeyerW);
+  double f_l = mju_compliantMuscleFlce0(l0, kGeyerW, kGeyerC);
+  EXPECT_NEAR(d->muscle_F_mtu[0], kSolFmax*Fv(v0, kGeyerK, kGeyerN)*(f_pe + A*f_l),
+              1e-9*kSolFmax);
+
+  const double h = 1e-6;
+  double f_plus = force_at(long_mtu, qvel + h, A), v_plus = d->actuator_velocity[0];
+  double f_minus = force_at(long_mtu, qvel - h, A), v_minus = d->actuator_velocity[0];
+  force_at(long_mtu, qvel, A);
+  double analytic = mju_compliantMuscleForceVel(m, d, 0);
+  EXPECT_LT(analytic, 0);
+  EXPECT_NEAR(analytic, (f_plus - f_minus)/(v_plus - v_minus), 1e-5*std::fabs(analytic));
+
+  mj_deleteData(d);
+  mj_deleteModel(m);
+}
+
+
+// The fiber's positivity guard sits far below any length the buffer element holds. With a W fitted
+// to a Thelen-sourced curve the element's rest length is a few percent of l_opt, so on a short fiber
+// it holds the active fiber under a millimetre -- where the absolute 1 mm clamp this replaced would
+// have stopped it first. With W >= 1 the element is off, and only the guard is left.
+TEST_F(CompliantMuscleTest, BufferElementIsNotPreemptedByTheFiberGuard) {
+  // abd_r's curves (W 0.922) on a 44 mm fiber
+  const Geyer g = {0.044, 0.25, kW, kGeyerC, 1.5, 4, kEref, kLpe0, kErefPe};
+  mjModel* m = LoadModelFromString(HangingMuscle(
+      "3000 0.044 0.25 15 0.9219990822 -2.995732273553991 1.5 4 0.0492005381" +
+      std::string(kOwnPe)));
+  ASSERT_THAT(m, NotNull());
+  mjData* d = mj_makeData(m);
+
+  double l_ce_star = BufferRoot(g, 1.0);
+  EXPECT_LT(l_ce_star, 0.001) << "the buffered fiber is under 1 mm";
+  Equilibrate(m, d, 0.2, 1.0);
+  EXPECT_NEAR(d->act[0], l_ce_star, 1e-5*g.l_opt);
+  EXPECT_GT(d->act[0], 1e-6*g.l_opt);
+  mj_deleteData(d);
+  mj_deleteModel(m);
+
+  // W > 1: nothing holds the active fiber, which goes to the guard and stays finite
+  m = LoadModelFromString(HangingMuscle("3000 0.044 0.25 15 1.002 -2.995732273553991 1.5 4 0.05"));
+  ASSERT_THAT(m, NotNull());
+  d = mj_makeData(m);
+  Equilibrate(m, d, 0.2, 1.0);
+  EXPECT_EQ(d->act[0], 1e-6*0.044);
+  EXPECT_EQ(d->muscle_F_mtu[0], 0.0);
+  d->ctrl[0] = 1.0;
+  for (int t = 0; t < 2000; t++) {
+    mj_step(m, d);
+    ASSERT_TRUE(std::isfinite(d->act[0]) && std::isfinite(d->qpos[0])) << "step " << t;
+    ASSERT_GE(d->act[0], 1e-6*0.044*(1 - 1e-12)) << "step " << t;
+  }
+  mj_deleteData(d);
+  mj_deleteModel(m);
+}
+
+
+// End to end: a muscle holding a mass settles at its weight, and while driven the fiber stays on
+// the root of the paper's residual, step after step -- to the stepping solve's 1e-5, except within
+// 0.01 of v0 = 1. There f_v's slope jumps from 0.026 (region 2) to 100 (region 3), the
+// finite-difference Jacobian straddles the jump, and the solve can stop just short: 1.4e-5 on this
+// trajectory, on 39 of 4000 steps near the kink. Region 3 is under review (CHANGELOG-son.md, E3).
+TEST_F(CompliantMuscleTest, CarriesTheLoadAndStaysOnTheResidualWhileDriven) {
+  mjModel* m = LoadModelFromString(HangingMuscle(kSol, 50.0));
+  ASSERT_THAT(m, NotNull());
+  mjData* d = mj_makeData(m);
+  d->qpos[0] = kAnchor - (kSolLslack + kSolLopt);
+  mj_forward(m, d);
+  mju_compliantMuscleEquilibrate(m, d);
+
+  d->ctrl[0] = 0.5;
+  for (int t = 0; t < 8000; t++) mj_step(m, d);
+  EXPECT_NEAR(d->muscle_F_mtu[0], 50.0*9.81, 1e-2);
+  EXPECT_NEAR(d->qvel[0], 0.0, 1e-4);
+
+  double worst = 0, worst_at_kink = 0;
+  for (int t = 0; t < 4000; t++) {
+    d->ctrl[0] = 0.5 + 0.5*std::sin(0.01*t);
+    double A_in = d->act[1];
+    mj_step(m, d);
+    double v0 = d->muscle_v_ce[0]/(kSolLopt*kSolVmax);
+    double r = std::fabs(Residual2010(kSolGeyer, A_in, d->muscle_l_ce[0],
+                                      d->actuator_length[0], v0));
+    double& w = std::fabs(v0 - 1) < 0.01 ? worst_at_kink : worst;
+    w = std::fmax(w, r);
+  }
+  EXPECT_LT(worst, 1.01e-5);          // the tolerance, and the rounding of rebuilding it here
+  EXPECT_LT(worst_at_kink, 1e-4);
 
   mj_deleteData(d);
   mj_deleteModel(m);
