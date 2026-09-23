@@ -352,6 +352,15 @@ def test_compliant_rejects_malformed_gainprm(tail, why):
         mujoco.MjModel.from_xml_string(_model_xml('compliant_mtu', _ABD_R + tail))
 
 
+def test_millard_rejects_a_collapsed_ascending_limb():
+    """jinsimul's Millard fit to Thelen2003 puts transition - min at 1.1e-9; OpenSim needs
+    every active-curve knot gap above sqrt(eps), and refuses the shape itself."""
+    prm = {AFL_MIN: 3.531853309691377e-10, AFL_TRANS: 1.4309121738647031e-09,
+           AFL_MAX: 2.1913352613858628, AFL_SLOPE: 0.9209090308901695}
+    with pytest.raises(ValueError, match=r'sqrt\(eps\)'):
+        mujoco.MjModel.from_xml_string(_model_xml('millard_mtu', _gainprm(prm)))
+
+
 def test_curve_bindings_return_opensim_landmarks():
     """mju_millardCurve / mju_hyfydyCurve, the comparison doc/muscle_mtu.rst points at."""
     deriv = np.zeros(1)

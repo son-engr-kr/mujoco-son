@@ -213,6 +213,26 @@ Notes on individual parameters:
    from zero. It is a well-posedness condition, not a decoration. It is also what lets an inactive
    muscle be a damper: the term is not scaled by activation.
 
+``min_norm_active_fiber_length`` (slot 8)
+   Zero means OpenSim's 0.4441 here as in every other slot, so a fit that drives this toward
+   zero, as fits to ``Thelen2003Muscle`` curves do, has to write a small positive number. That
+   number then sets the unpennated fiber's lower clamp, ``min_norm_active_fiber_length * l_opt``.
+
+   The active curve must satisfy OpenSim's own conditions, checked at load:
+   ``0 <= min < transition < 1 < max``, with every gap wider than
+   :math:`\sqrt{\epsilon} \approx 1.5\times10^{-8}`, and ``shallow_ascending_slope`` below
+   ``1/(1 - transition)``. A fit that collapses the ascending limb onto zero is refused: the fit of
+   ``Lumbar_C_210``'s Thelen curves with ``min`` = 3.5e-10 and ``transition`` = 1.4e-9 fails the
+   gap condition, and OpenSim 4.6 refuses the same shape when the ``ActiveForceLengthCurve`` is
+   constructed.
+
+   An admissible shape is not necessarily one the baked table resolves (see :ref:`mtuCurves`).
+   Its knots are ``(max - min)/512`` apart, about 0.004 here, so an ascending limb only a few knots
+   wide is smoothed over. Measured against OpenSim 4.6's ``ActiveForceLengthCurve``, the worst
+   error in normalized force is 1.2e-8 for the default shape. With ``min`` near zero and the
+   fitted ``max`` and slope, it is 1.9e-8 at ``transition`` 0.3, 2.3e-6 at 0.1 and 0.087 at 1e-7.
+   The larger errors sit at the foot of the curve, where the fiber rarely operates.
+
 Activation dynamics are MuJoCo's own: ``dyntype="muscle"`` is **required**, with
 ``dynprm="<activation_time_constant> <deactivation_time_constant>"`` (OpenSim's defaults are
 0.01 and 0.04). To approximate OpenSim's ``ignore_activation_dynamics``, use small time constants.
@@ -405,7 +425,9 @@ Instead, each curve is **baked**: sampled once onto a uniform 513-knot grid of
 :math:`(y, dy/dx, d^2y/dx^2)` and evaluated at runtime as a quintic Hermite polynomial — an index,
 a clamp and a polynomial, with no iteration and no section scan. Value and slope come from the
 same interpolant, so the Jacobian differentiates exactly what the residual evaluates. Worst
-deviation from the exact Bézier curve is below :math:`7\times10^{-9}` in normalized force.
+deviation from the exact Bézier curve is below :math:`7\times10^{-9}` in normalized force at
+OpenSim's default shapes. A shape with a section only a few knots wide is resolved less well; see
+``min_norm_active_fiber_length`` under :ref:`mtuParameters`.
 
 The bake happens **lazily at runtime**, at the first ``mj_resetData`` that sees the muscle, into a
 process-wide cache keyed by the shape parameters. Nothing is stored in ``mjModel``: a table written

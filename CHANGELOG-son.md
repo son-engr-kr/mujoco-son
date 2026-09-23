@@ -43,6 +43,53 @@ neumove projects, including the MyoAssist compliant models in `mujoco-compliant-
 exactly nine values. The 658 actuators in the files that compile on their own resolve slots 9-31
 to 0 after defaults as well.
 
+### Fixed: the Millard active force-length curve enforces OpenSim's range checks
+
+`engine_muscle_millard_bezier.h` claimed to enforce OpenSim's admissibility conditions, but the
+active curve checked only that its knots increase. OpenSim's
+`createFiberActiveForceLengthCurve` also requires `min >= 0`, every knot gap wider than
+`sqrt(eps)` (1.5e-8), and `shallow_ascending_slope < (1 - minimum_value)/(1 - transition)`. It now
+checks all three, and the passive, tendon and force-velocity curves now check that their
+curviness is in `[0, 1]`, as OpenSim's do.
+
+This surfaced while checking jinsimul's Millard fit to `Lumbar_C_210`'s Thelen curves, which puts
+`min_norm_active_fiber_length` at 3.5e-10 and the transition at 1.4e-9. OpenSim 4.6 refuses that
+shape when the `ActiveForceLengthCurve` is constructed. `a6` refused it too, but by accident, at
+the corner-control-point check, and it accepted nearby shapes OpenSim refuses, such as a
+transition of 3.5e-9. None of the 312 fitted muscles committed in `mujoco-compliant-muscles`
+violates any of the new checks.
+
+### Measured: `min_norm_active_fiber_length` near zero
+
+Zero in slot 8 still means OpenSim's 0.4441, like every other slot, so a fit that drives it toward
+zero has to write a small positive number. The rule stays as it is and is now documented and
+tested.
+
+A value near zero works. With 3.5e-10 and an admissible transition, a muscle equilibrates and steps
+without a NaN in three variants: unpennated, where the fiber clamp is 6.5e-11 m, pennated, where
+`h/sin(phi_max)` is the clamp, and rigid-tendon. The sweep runs from a path half the tendon's
+slack length to one that stretches the parallel element, followed by 4000 driven steps.
+
+A value near zero is not always resolved, though. The baked table's knots are `(max - min)/512`
+apart, and an ascending limb only a few knots wide is smoothed over. Measured against OpenSim
+4.6's `ActiveForceLengthCurve`, the worst error in normalized force is 1.2e-8 at the default shape.
+With `min` near zero it is 1.9e-8 for a transition of 0.3, 2.3e-6 for 0.1, and 0.087 for 1e-7,
+in each case at the foot of the curve. For the 113 Thelen-sourced fits in
+`mujoco-compliant-muscles` (`min` 0.05, transitions from 0.0975) the median is 1.5e-7 and the
+worst 7.5e-5. `doc/muscle_mtu.rst` now carries these numbers in place of the unqualified 7e-9.
+
+### Not in this release
+
+- The Geyer 2010 residual with the buffer element (E2) and force-velocity region 3 (E3) await a
+  decision.
+- The damped model's forcing of `concentric_slope_at_vmax` and `eccentric_slope_at_vmax` to 0 (E5)
+  is not enforced. Slots 25 and 28 are still used as given. jinsimul's Thelen fit sets them to
+  0.234 and 0.126, so it is a live case rather than a hypothetical one.
+- Python's `MjSpec` exposes only 10 of the 32 `gainprm` slots, because its bindings are generated
+  from `introspect/structs.py`, which still declares 10. This predates this release, and it means
+  `E_REF_PE` (slot 10) and the Millard curve slots cannot be set through `MjSpec` from Python.
+  MJCF and `MjModel.actuator_gainprm` are unaffected.
+
 ## v3.3.3+son4.0a6 — alpha
 
 ### Fixed: `mju_mtuMuscleEquilibrate` did not reach the fiber equilibrium

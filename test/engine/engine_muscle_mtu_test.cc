@@ -1248,5 +1248,180 @@ TEST_F(MuscleMtuTest, HyfydyRejectsCurveShapeParameters) {
   if (model) mj_deleteModel(model);
 }
 
+
+// ------------------------------------------------------------------------------------------
+// Active force-length curves fitted to Thelen2003, where min_norm_active_fiber_length goes to 0.
+
+// Slots 8-31 of jinsimul's Millard fit to Lumbar_C_210's Thelen curves
+// (data/muscle_fit/millard_thelen_lumbar210.json, block), with minimum_value (0.0074) replaced by
+// the 0 that slot 12 requires. `afl` is slots 8-11.
+std::string ThelenFitShape(const char* afl) {
+  return std::string(afl) +
+         " 0 0 "
+         "0.04179811946585685 0.5964168220217628 0.2734354303931352 7.0483566037528895 "
+         "0.6485551560379731 0 "
+         "0.0329927724761894 51.63096652474981 0.2084607998115487 0.25021220733287797 "
+         "1.7430548947734776 0.23443518268326335 0.275657413457181 5.265654631839498 "
+         "0.12602000033028238 0.1260428439362502 0.5546747462355381 0.8464541431020638";
+}
+constexpr char kThelenFitAfl[] =
+    "3.531853309691377e-10 1.4309121738647031e-09 2.1913352613858628 0.9209090308901695";
+
+
+// The fit collapses the ascending limb: transition - min = 1.1e-9. OpenSim's
+// createFiberActiveForceLengthCurve requires every knot gap to exceed sqrt(Eps) = 1.5e-8, and
+// OpenSim 4.6 refuses this shape when the ActiveForceLengthCurve is constructed. So must this.
+TEST_F(MuscleMtuTest, ThelenFitWithCollapsedAscendingLimbIsRejectedAsByOpenSim) {
+  char error[1024] = "";
+  mjModel* model = LoadModelFromString(
+      HangingMuscle("millard_mtu", ("97 0.1841 0.0647 10 0 0 0 0 " +
+                                    ThelenFitShape(kThelenFitAfl)).c_str()),
+      error, sizeof(error));
+  EXPECT_THAT(model, ::testing::IsNull());
+  EXPECT_THAT(std::string(error), ::testing::HasSubstr("each gap larger than sqrt(eps)"));
+  if (model) mj_deleteModel(model);
+}
+
+
+// OpenSim's other two active-curve conditions, which an earlier port did not enforce: x0 >= 0,
+// and a shallow ascending slope that stays below the one reaching the plateau before x2 = 1.
+TEST_F(MuscleMtuTest, ActiveCurveEnforcesOpenSimsRangeChecks) {
+  struct Case { const char* name; const char* afl; const char* why; };
+  const Case cases[] = {
+      {"negative min", "-0.01 0.73 1.8123 0.8616", "0 <= x0"},
+      {"gap below sqrt(eps)", "0.4441 0.44410001 1.8123 0.8616", "each gap larger than sqrt(eps)"},
+      {"slope reaching the plateau early", "0.4441 0.73 1.8123 3.8", "dydx must be in"}};
+  for (const Case& c : cases) {
+    char error[1024] = "";
+    std::string prm = std::string("3000 0.15 0.15 10 0 0.1 0 0 ") + c.afl;
+    mjModel* model = LoadModelFromString(HangingMuscle("millard_mtu", prm.c_str()),
+                                         error, sizeof(error));
+    EXPECT_THAT(model, ::testing::IsNull()) << c.name;
+    EXPECT_THAT(std::string(error), ::testing::HasSubstr(c.why)) << c.name;
+    if (model) mj_deleteModel(model);
+  }
+}
+
+
+// min_norm_active_fiber_length follows the same zero-means-default rule as every other slot, so
+// a 0 in slot 8 is OpenSim's 0.4441, not zero. A fit that drives it to zero has to write a small
+// positive number, and that number -- not 0.4441 -- must then set the fiber's lower clamp.
+TEST_F(MuscleMtuTest, ZeroMinActiveFiberLengthMeansTheDefaultNotZero) {
+  // the Thelen fit's max and slope; min and transition as below
+  const std::string mech = "97 0.1841 0.0647 10 0 0 0 0 ";
+  const double l_opt = 0.1841, l_slack = 0.0647;
+  struct Case { const char* afl; double lce_min; };
+  const Case cases[] = {
+      // 0 and 0: OpenSim's 0.4441 and 0.73
+      {"0 0 2.1913352613858628 0.9209090308901695", 0.4441*l_opt},
+      // the fitted min, with the transition moved just far enough for the shape to be admissible
+      {"3.531853309691377e-10 1e-7 2.1913352613858628 0.9209090308901695",
+       3.531853309691377e-10*l_opt}};
+
+  for (const Case& c : cases) {
+    mjModel* model = LoadModelFromString(
+        HangingMuscle("millard_mtu", (mech + ThelenFitShape(c.afl)).c_str()));
+    ASSERT_THAT(model, ::testing::NotNull()) << c.afl;
+    mjData* data = mj_makeData(model);
+
+    // a path far shorter than the tendon: the fiber is pushed onto its clamp
+    data->qpos[0] = 0.3 - 0.5*l_slack;
+    data->act[1] = 1.0;
+    data->ctrl[0] = 1.0;
+    mj_forward(model, data);
+    mju_mtuMuscleEquilibrate(model, data);
+    EXPECT_NEAR(data->act[0], c.lce_min, 1e-15) << c.afl;
+
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
+}
+
+
+// With min_norm_active_fiber_length near zero the unpennated fiber may shorten almost to nothing
+// (lce_min = 6.5e-11 m here), while a pennated one is still held at h/sin(phi_max). Both must
+// equilibrate and step without a NaN, from a path so short that the fiber sits on its clamp to
+// one long enough to stretch the parallel element.
+//
+// The shape is the Thelen fit with the transition moved to the nearest round value OpenSim
+// admits. Note that the baked table does NOT resolve an ascending limb this narrow -- its first
+// cell is 4.3e-3 wide -- so near l0 = 0 it departs from the exact curve by up to 0.09 in
+// normalized force (doc/muscle_mtu.rst). This test is about robustness, not accuracy.
+TEST_F(MuscleMtuTest, NearZeroMinActiveFiberLengthEquilibratesPennatedAndNot) {
+  const char* afl =
+      "3.531853309691377e-10 1e-7 2.1913352613858628 0.9209090308901695";
+  // Ps_L1_VB_r of Lumbar_C_210 (97 N, l_opt 0.1841, l_slack 0.0647, unpennated). Lumbar_C_210
+  // has no pennated muscle, so the pennated case gives the same muscle 0.2 rad; the rigid case
+  // shortens its tendon below 0.05 l_opt.
+  struct Case { const char* name; const char* mech; double l_slack, pennation; };
+  const Case cases[] = {
+      {"unpennated", "97 0.1841 0.0647 10 0 0 0 0 ", 0.0647, 0.0},
+      {"pennated",   "97 0.1841 0.0647 10 0.2 0 0 0 ", 0.0647, 0.2},
+      {"rigid",      "97 0.1841 0.005 10 0 0 0 0 ", 0.005, 0.0}};
+  const double l_opt = 0.1841;
+
+  for (const Case& c : cases) {
+    std::string prm = c.mech + ThelenFitShape(afl);
+    mjModel* model = LoadModelFromString(HangingMuscle("millard_mtu", prm.c_str(), 1.0));
+    ASSERT_THAT(model, ::testing::NotNull()) << c.name;
+    mjData* data = mj_makeData(model);
+
+    const double h = l_opt*std::sin(c.pennation);
+    const double lce_min = std::fmax(3.531853309691377e-10*l_opt, h/0.9949874371066201);
+    const bool rigid = c.l_slack < 0.05*l_opt;
+    int on_clamp = 0, solved = 0;
+
+    for (int i = 0; i <= 60; i++) {
+      double l_mtu = 0.5*c.l_slack + (c.l_slack + 1.9*l_opt)*i/60.0;
+      for (double act : {0.0, 0.5, 1.0}) {
+        mj_resetData(model, data);
+        data->qpos[0] = 0.3 - l_mtu;
+        data->act[1] = act;
+        data->ctrl[0] = act;
+        mj_forward(model, data);
+        mju_mtuMuscleEquilibrate(model, data);
+        mj_forward(model, data);
+
+        ASSERT_TRUE(std::isfinite(data->act[0])) << c.name << " l_mtu=" << l_mtu;
+        ASSERT_TRUE(std::isfinite(data->muscle_F_mtu[0])) << c.name << " l_mtu=" << l_mtu;
+        ASSERT_TRUE(std::isfinite(data->act_dot[0])) << c.name << " l_mtu=" << l_mtu;
+        EXPECT_GE(data->act[0], lce_min*(1 - 1e-12)) << c.name << " l_mtu=" << l_mtu;
+        EXPECT_GE(data->muscle_F_mtu[0], 0) << c.name << " l_mtu=" << l_mtu;
+        if (data->act[0] <= lce_min*(1 + 1e-9)) {
+          on_clamp++;
+        } else if (!rigid) {
+          // off the clamp the fiber is at a root of the isometric residual
+          EXPECT_LT(std::fabs(Residual(model, data, 0, false, act)), 1e-6)
+              << c.name << " l_mtu=" << l_mtu << " a=" << act;
+          solved++;
+        }
+      }
+    }
+    // the compliant sweeps must have visited both regimes. (The rigid path's fiber is
+    // sqrt((l_MTU - l_slack)^2 + h^2), OpenSim's rule, which a 6.5e-11 m clamp does not reach.)
+    if (!rigid) {
+      EXPECT_GT(on_clamp, 0) << c.name;
+      EXPECT_GT(solved, 0) << c.name;
+    }
+
+    // and the stepping path, driven, from the fiber on its clamp: the 1 kg mass falls until the
+    // muscle catches it
+    mj_resetData(model, data);
+    data->qpos[0] = 0.3 - 0.5*c.l_slack;
+    mj_forward(model, data);
+    mju_mtuMuscleEquilibrate(model, data);
+    for (int t = 0; t < 4000; t++) {
+      data->ctrl[0] = 0.5 + 0.5*std::sin(0.005*t);
+      mj_step(model, data);
+      ASSERT_TRUE(std::isfinite(data->act[0])) << c.name << " step " << t;
+      ASSERT_TRUE(std::isfinite(data->qpos[0])) << c.name << " step " << t;
+      EXPECT_GE(data->act[0], lce_min*(1 - 1e-12)) << c.name << " step " << t;
+    }
+
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
+}
+
 }  // namespace
 }  // namespace mujoco

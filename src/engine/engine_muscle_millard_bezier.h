@@ -273,8 +273,15 @@ inline double ScaleCurviness(double c) { return 0.1 + 0.8*c; }
 // ylow = 0 (damped model), dydx = 0.8616, curviness = 1.0.
 inline SegFn ActiveForceLength(double x0, double x1, double x2, double x3,
                                double ylow, double dydx, double curviness) {
-  Check(x0 < x1 && x1 < x2 && x2 < x3, "active F-L knots must be increasing");
-  Check(ylow >= 0.0 && dydx >= 0.0, "active F-L ylow/dydx must be non-negative");
+  // upstream's range checks, verbatim: every knot gap must exceed sqrt(Eps), and the ascending
+  // slope must stay below the one that climbs from ylow at x1 to the plateau at x2
+  const double root_eps = std::sqrt(2.220446049250313e-16);  // sqrt(SimTK::Eps)
+  Check(x0 >= 0.0 && x1 > x0 + root_eps && x2 > x1 + root_eps && x3 > x2 + root_eps,
+        "active F-L needs 0 <= x0 < x1 < x2 < x3, each gap larger than sqrt(eps)");
+  Check(ylow >= 0.0, "active F-L ylow must be non-negative");
+  Check(dydx >= 0.0 && dydx < (1.0 - ylow)/(x2 - x1),
+        "active F-L dydx must be in [0, (1 - ylow)/(x2 - x1))");
+  Check(curviness >= 0.0 && curviness <= 1.0, "active F-L curviness must be in [0, 1]");
   const double c = ScaleCurviness(curviness);
   const double xDelta = 0.05*x2;  // half-width of the sarcomere shoulder
   const double xs = x2 - xDelta;
@@ -315,6 +322,7 @@ inline SegFn FiberForceLength(double eZero, double eIso, double kLow, double kIs
   Check(eIso > eZero, "passive F-L needs eIso > eZero");
   Check(kIso > 1.0/(eIso - eZero), "passive F-L needs kIso > 1/(eIso-eZero)");
   Check(kLow > 0.0 && kLow < 1.0/(eIso - eZero), "passive F-L kLow out of range");
+  Check(curviness >= 0.0 && curviness <= 1.0, "passive F-L curviness must be in [0, 1]");
   const double c = ScaleCurviness(curviness);
   const double xZero = 1.0 + eZero, yZero = 0.0;
   const double xIso = 1.0 + eIso, yIso = 1.0;
@@ -340,6 +348,7 @@ inline SegFn TendonForceLength(double eIso, double kIso, double fToe, double cur
   Check(eIso > 0.0, "tendon eIso must be positive");
   Check(fToe > 0.0 && fToe < 1.0, "tendon fToe must be in (0, 1)");
   Check(kIso > 1.0/eIso, "tendon needs kIso > 1/eIso");
+  Check(curviness >= 0.0 && curviness <= 1.0, "tendon curviness must be in [0, 1]");
   const double c = ScaleCurviness(curviness);
   const double x0 = 1.0, y0 = 0.0, dydx0 = 0.0;
   const double xIso = 1.0 + eIso, yIso = 1.0, dydxIso = kIso;
@@ -379,6 +388,8 @@ inline SegFn ForceVelocity(double fmaxE, double dydxC, double dydxNearC, double 
   Check(dydxIso > 1.0, "F-V dydxIso must exceed 1");
   Check(dydxE >= 0.0 && dydxE < (fmaxE - 1.0), "F-V dydxE out of range");
   Check(dydxNearE >= dydxE && dydxNearE < (fmaxE - 1.0), "F-V dydxNearE out of range");
+  Check(concCurviness >= 0.0 && concCurviness <= 1.0, "F-V concCurviness must be in [0, 1]");
+  Check(eccCurviness >= 0.0 && eccCurviness <= 1.0, "F-V eccCurviness must be in [0, 1]");
   const double cC = ScaleCurviness(concCurviness), cE = ScaleCurviness(eccCurviness);
 
   const double xC = -1.0, yC = 0.0;
