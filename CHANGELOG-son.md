@@ -3,7 +3,7 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
-## Unreleased
+## v3.3.3+son4.0a7 — alpha
 
 ### Added: `compliant_mtu` parallel element with its own slack length and reference strain
 
