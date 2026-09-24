@@ -3,7 +3,11 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
-## Unreleased
+## v3.3.3+son4.0a10 — alpha
+
+Supersedes `son4.0a9`, which is left as an unpublished draft: its Linux and Windows wheels still
+refuse some of the stiff tendon curves `a9` set out to accept. Everything else in `a9` is in this
+release unchanged, so read the `a9` notes below as part of this one.
 
 ### Fixed: stiff tendon curves were still refused on x86 and MSVC builds
 
