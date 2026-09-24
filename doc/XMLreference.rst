@@ -5188,9 +5188,9 @@ specify them independently.
    ``act = [fiber_length, activation]``; ``actdim`` is set to 2 by the compiler. They do not follow the affine formula above: each solves its own fiber equilibrium and
    produces the actuator force directly, with the activation entering the fiber force rather than
    multiplying a gain. ``millard_mtu`` and ``hyfydy_mtu`` take their 32 gainprm slots as a 1:1 map
-   of an OpenSim or Hyfydy muscle's properties. ``compliant_mtu`` takes eleven, Geyer & Herr's nine
-   and an optional slack length and reference strain for the parallel element, and requires the
-   rest to be 0; see :doc:`muscle_mtu`.
+   of an OpenSim or Hyfydy muscle's properties. ``compliant_mtu`` takes twelve: Geyer & Herr's nine,
+   an optional slack length and reference strain for the parallel element, and a rigid-tendon flag.
+   It requires the rest to be 0; see :doc:`muscle_mtu`.
 
 .. _actuator-general-biastype:
 

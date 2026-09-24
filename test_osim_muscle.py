@@ -19,6 +19,7 @@ import mujoco
 FMAX, LOPT, LSLACK, VMAX, PENNATION, BETA, TOL = range(7)
 AFL_MIN, AFL_TRANS, AFL_MAX, AFL_SLOPE = 8, 9, 10, 11
 PFL_E0, PFL_E1, PFL_KLOW, PFL_KISO, PFL_CURV = 14, 15, 16, 17, 18
+IGNORE_TENDON_COMPLIANCE = 19
 TFL_E1, TFL_KISO, TFL_FTOE, TFL_CURV = 20, 21, 22, 23
 (FV_FMAXE, FV_DYDXC, FV_DYDXNEARC, FV_DYDXISO,
  FV_DYDXE, FV_DYDXNEARE, FV_CONCCURV, FV_ECCCURV) = range(24, 32)
@@ -344,10 +345,12 @@ def test_compliant_own_parallel_element_matches_closed_form():
     (' 1.2376', 'must both be 0'),
     (' 0 0.3815', 'must both be 0'),
     (' -1.2376 0.3815', 'must both be 0'),
-    (_ABD_R_PE + ' 0.5', r'gainprm\[11\] is not a compliant_mtu parameter'),
+    (_ABD_R_PE + ' 0.5', r'gainprm\[11\] \(rigid tendon\) must be 0 or 1'),
+    (_ABD_R_PE + ' 1 0.5', r'gainprm\[12\] is not a compliant_mtu parameter'),
 ])
 def test_compliant_rejects_malformed_gainprm(tail, why):
-    """Slots 9-10 come as a pair; 11-31 are not parameters. Either mistake fails the load."""
+    """Slots 9-10 come as a pair, 11 is a boolean, 12-31 are not parameters. Each mistake
+    fails the load."""
     with pytest.raises(ValueError, match=why):
         mujoco.MjModel.from_xml_string(_model_xml('compliant_mtu', _ABD_R + tail))
 
@@ -406,6 +409,36 @@ def test_millard_damped_model_refuses_slopes_at_vmax():
         mujoco.MjModel.from_xml_string(_model_xml('millard_mtu', _gainprm({FV_DYDXC: 0.2})))
     undamped = _gainprm({BETA: -1.0, FV_DYDXC: 0.2, FV_DYDXE: 0.1})
     mujoco.MjModel.from_xml_string(_model_xml('millard_mtu', undamped))
+
+
+@pytest.mark.parametrize('gaintype', _MODELS)
+def test_ignore_tendon_compliance_makes_any_tendon_rigid(gaintype):
+    """gainprm[19] is OpenSim's ignore_tendon_compliance: at l_slack = 0.7 l_opt, where the
+    ratio rule would solve a compliant tendon, the fiber is hypot(l_MTU - l_slack, h)."""
+    l_opt, l_slack, pennation = 0.15, 0.105, 0.3
+    prm = {LSLACK: l_slack, PENNATION: pennation, IGNORE_TENDON_COMPLIANCE: 1}
+    model = mujoco.MjModel.from_xml_string(_model_xml(gaintype, _gainprm(prm)))
+    data = mujoco.MjData(model)
+    l_mtu = l_slack + 1.1*l_opt
+    data.qpos[0] = _HANG - l_mtu
+    data.act[1] = 0.6
+    mujoco.mj_forward(model, data)
+    assert data.muscle_l_ce[0] == pytest.approx(np.hypot(l_mtu - l_slack, l_opt*np.sin(pennation)),
+                                                abs=1e-12)
+    with pytest.raises(ValueError, match='must be 0 or 1'):
+        mujoco.MjModel.from_xml_string(
+            _model_xml(gaintype, _gainprm({IGNORE_TENDON_COMPLIANCE: 0.5})))
+
+
+def test_compliant_rigid_tendon_flag():
+    """compliant_mtu's gainprm[11] declares the tendon rigid at any slack length."""
+    prm = '4000 0.1 0.07 6 0.56 -2.995732273553991 1.5 5 0.04 0 0 1'
+    model = mujoco.MjModel.from_xml_string(_model_xml('compliant_mtu', prm))
+    data = mujoco.MjData(model)
+    data.qpos[0] = _HANG - (0.07 + 1.1*0.1)
+    data.act[1] = 0.6
+    mujoco.mj_forward(model, data)
+    assert data.muscle_l_ce[0] == pytest.approx(1.1*0.1, abs=1e-12)
 
 
 def test_millard_rejects_a_collapsed_ascending_limb():

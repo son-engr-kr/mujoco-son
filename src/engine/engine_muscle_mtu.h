@@ -38,9 +38,10 @@ extern "C" {
 // expressible. A hand-written model therefore fills in the first six slots and leaves the rest
 // blank; a converted .osim fills in whatever it overrode.
 //
-// Slots 8..31 are curve SHAPE parameters and apply to millard_mtu only. Hyfydy's curves are
-// published polynomials with no per-muscle shape, so hyfydy_mtu requires them to be zero rather
-// than silently ignoring a value someone meant to have an effect.
+// Slots 8..31 are curve SHAPE parameters and apply to millard_mtu only, except slot 19. Hyfydy's
+// curves are published polynomials with no per-muscle shape, so hyfydy_mtu requires them to be
+// zero rather than silently ignoring a value someone meant to have an effect. Slot 19 is OpenSim's
+// ignore_tendon_compliance, which selects the rigid-tendon path for either model.
 enum {
   // --- mechanical, both models -------------------------------------------------------------
   mjMTU_FMAX = 0,     // max_isometric_force                              [N]
@@ -66,7 +67,7 @@ enum {
   mjMTU_PFL_KLOW,     // stiffness_at_low_force                           default 0.2
   mjMTU_PFL_KISO,     // stiffness_at_one_norm_force                      default 2/(e1-e0)
   mjMTU_PFL_CURV,     // curviness                                        default 0.75
-  mjMTU_PFL_RESERVED19,
+  mjMTU_IGNORE_TENDON_COMPLIANCE,  // ignore_tendon_compliance: 0 or 1, both models
 
   // --- OpenSim TendonForceLengthCurve, millard_mtu only --------------------------------------
   mjMTU_TFL_E1 = 20,  // strain_at_one_norm_force                         default 0.049

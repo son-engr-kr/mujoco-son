@@ -1611,6 +1611,7 @@ typedef struct {
   mjtNum E_REF;      // Reference strain
   mjtNum L_PE0;      // Parallel element slack length, in l_opt
   mjtNum E_REF_PE;   // Parallel element reference strain
+  int rigid_declared;  // the model declares the tendon rigid (gainprm[11])
 } mjCompliantMuscleParams;
 
 
@@ -1649,6 +1650,9 @@ void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
     params->L_PE0 = gainprm[9];
     params->E_REF_PE = gainprm[10];
   }
+
+  // OpenSim's ignore_tendon_compliance, which millard_mtu carries in gainprm[19]
+  params->rigid_declared = gainprm[11] == 1;
 }
 
 
@@ -1657,8 +1661,9 @@ void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
 //
 // Slots 9 and 10 are the parallel element's own slack length and reference strain. They only
 // mean something together, so exactly one of them set is rejected rather than completed with a
-// default. Nothing reads slots 11-31: a value there is a modelling mistake or a model written
-// for a newer build, and ignoring it would run a different muscle from the one declared.
+// default. Slot 11 declares the tendon rigid and is a boolean. Nothing reads slots 12-31: a value
+// there is a modelling mistake or a model written for a newer build, and ignoring it would run a
+// different muscle from the one declared.
 static void mju_compliantMuscleCheckParams(const mjModel* m, int id) {
   const mjtNum* prm = m->actuator_gainprm + mjNGAIN*id;
 
@@ -1671,7 +1676,12 @@ static void mju_compliantMuscleCheckParams(const mjModel* m, int id) {
     }
   }
 
-  for (int k = 11; k < mjNGAIN; k++) {
+  if (prm[11] != 0 && prm[11] != 1) {
+    mju_error("compliant_mtu actuator %d: gainprm[11] (rigid tendon) must be 0 or 1; got %g",
+              id, prm[11]);
+  }
+
+  for (int k = 12; k < mjNGAIN; k++) {
     if (prm[k] != 0) {
       mju_error("compliant_mtu actuator %d: gainprm[%d] is not a compliant_mtu parameter and "
                 "must be 0; got %g", id, k, prm[k]);
@@ -1688,11 +1698,11 @@ static void mju_compliantMuscleCheckParams(const mjModel* m, int id) {
 static const mjtNum kRigidTendonRatio = 0.05;
 
 
-// True when the tendon is short enough (relative to optimal fiber length)
-// that the series-elastic equilibrium solve becomes ill-conditioned and the
-// muscle should be evaluated with a rigid tendon instead.
+// True when the model declares the tendon rigid (gainprm[11]), or when the tendon is short enough
+// (relative to optimal fiber length) that the series-elastic equilibrium solve becomes
+// ill-conditioned and the muscle should be evaluated with a rigid tendon instead.
 static int mju_compliantMuscleIsRigid(const mjCompliantMuscleParams* p) {
-  return p->l_slack < kRigidTendonRatio * p->l_opt;
+  return p->rigid_declared || p->l_slack < kRigidTendonRatio * p->l_opt;
 }
 
 
@@ -1946,7 +1956,7 @@ static void mju_compliantMuscleSolveSteadyState(
     mjtNum l_mtu,
     const mjCompliantMuscleParams* params) {
 
-  // Rigid-tendon fallback: a negligible free tendon makes the series-elastic
+  // Rigid tendon, declared or because a negligible free tendon makes the series-elastic
   // normalization (l_se / l_slack) singular and stalls this solver. Treat the
   // tendon as rigid and assign the fiber length algebraically.
   if (mju_compliantMuscleIsRigid(params)) {
@@ -2028,7 +2038,7 @@ static int mju_compliantMuscleNewtonStep(
     const mjCompliantMuscleParams* params,  // Muscle parameters
     mjtNum dt) {                            // Time step
 
-  // Rigid-tendon fallback: a negligible free tendon makes the series-elastic
+  // Rigid tendon, declared or because a negligible free tendon makes the series-elastic
   // normalization (l_se / l_slack) singular and stalls this solver. Treat the
   // tendon as rigid: the fiber takes all length change, so v_ce = v_mtu.
   if (mju_compliantMuscleIsRigid(params)) {
@@ -2086,10 +2096,11 @@ static mjtNum mju_compliantMuscleSolve(const mjModel* m, mjData* d, int actuator
   mjCompliantMuscleParams params;
   mju_compliantMuscleExtractParams(m, actuator_id, &params);
 
-  // Rigid-tendon fallback: muscles with a negligible free tendon (l_slack much smaller than
-  // l_opt) make the series-elastic normalization (l_se / l_slack) singular, which stalls the
-  // equilibrium solver and yields a constant force. For these the tendon is treated as rigid:
-  // the fiber length is algebraic, with no solve and no division by l_slack.
+  // Rigid tendon, declared (gainprm[11]) or as a fallback: muscles with a negligible free tendon
+  // (l_slack much smaller than l_opt) make the series-elastic normalization (l_se / l_slack)
+  // singular, which stalls the equilibrium solver and yields a constant force. For these the
+  // tendon is treated as rigid: the fiber length is algebraic, with no solve and no division by
+  // l_slack.
   if (mju_compliantMuscleIsRigid(&params)) {
     mjtNum l_ce_rigid, v_ce_rigid;
     mjtNum F_mtu = mju_compliantMuscleRigidForce(A, l_mtu, dt > 0 ? v_mtu : 0, &params,

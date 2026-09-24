@@ -541,9 +541,107 @@ TEST_F(CompliantMuscleTest, CarriesTheLoadAndStaysOnTheResidualWhileDriven) {
 
 
 // ------------------------------------------------------------------------------------------
+// A declared rigid tendon (gainprm[11]), OpenSim's ignore_tendon_compliance.
+
+// Where the ratio rule already makes the tendon rigid, declaring it must change nothing, bit for bit.
+TEST_F(CompliantMuscleTest, DeclaredRigidTendonIsTheRatioRulesPath) {
+  mjModel* m0 = LoadModelFromString(HangingMuscle(std::string(kSolRigid) + " 0 0 0"));
+  mjModel* m1 = LoadModelFromString(HangingMuscle(std::string(kSolRigid) + " 0 0 1"));
+  ASSERT_THAT(m0, NotNull());
+  ASSERT_THAT(m1, NotNull());
+  mjData* d0 = mj_makeData(m0);
+  mjData* d1 = mj_makeData(m1);
+  for (double l0 : {0.3, 0.9, 1.3}) {
+    for (double qvel : {-0.1, 0.0, 0.1}) {
+      for (auto [m, d] : {std::pair{m0, d0}, std::pair{m1, d1}}) {
+        mj_resetData(m, d);
+        d->qpos[0] = kAnchor - (kSolLslackRigid + l0*kSolLopt);
+        d->qvel[0] = qvel;
+        d->act[1] = 0.6;
+        mj_forward(m, d);
+      }
+      EXPECT_EQ(d0->muscle_F_mtu[0], d1->muscle_F_mtu[0]) << "l0=" << l0;
+      EXPECT_EQ(d0->muscle_l_ce[0], d1->muscle_l_ce[0]) << "l0=" << l0;
+      EXPECT_EQ(d0->act_dot[0], d1->act_dot[0]) << "l0=" << l0;
+      EXPECT_EQ(mju_compliantMuscleForceVel(m0, d0, 0), mju_compliantMuscleForceVel(m1, d1, 0));
+    }
+  }
+  mj_deleteData(d1);
+  mj_deleteData(d0);
+  mj_deleteModel(m1);
+  mj_deleteModel(m0);
+}
+
+
+// Declared rigid, the tendon is inextensible at any slack length: at l_slack = 0.7 l_opt the fiber
+// is l_mtu - l_slack and the force F_max max(0, f_v (f_pe + A f_l) - f_be), where without the flag
+// the same muscle solves a compliant tendon.
+TEST_F(CompliantMuscleTest, DeclaredRigidTendonAtAnySlackLength) {
+  const double l_opt = 0.1, l_slack = 0.07, v_max = 6, A = 0.6;
+  const Geyer g = {l_opt, l_slack, kGeyerW, kGeyerC, kGeyerN, kGeyerK, kGeyerEref, 1.0, kGeyerW};
+  const std::string prm = "4000 0.1 0.07 6 0.56 -2.995732273553991 1.5 5 0.04 0 0 ";
+  mjModel* rigid = LoadModelFromString(HangingMuscle(prm + "1"));
+  mjModel* compliant = LoadModelFromString(HangingMuscle(prm + "0"));
+  ASSERT_THAT(rigid, NotNull());
+  ASSERT_THAT(compliant, NotNull());
+  mjData* d = mj_makeData(rigid);
+  mjData* dc = mj_makeData(compliant);
+
+  for (double l0 : {0.3, 0.9, 1.1, 1.3}) {
+    double l_mtu = l_slack + l0*l_opt;
+    for (double qvel : {0.0, 0.1}) {                  // qvel > 0 shortens the path
+      for (auto [m, dd] : {std::pair{rigid, d}, std::pair{compliant, dc}}) {
+        mj_resetData(m, dd);
+        dd->qpos[0] = kAnchor - l_mtu;
+        dd->qvel[0] = qvel;
+        dd->act[1] = A;
+        mj_forward(m, dd);
+      }
+      double v0 = d->actuator_velocity[0]/(l_opt*v_max);
+      double pull = Fv(v0, g.K, g.N)*(mju_compliantMuscleFpe0(l0, 1.0, g.W) +
+                                      A*mju_compliantMuscleFlce0(l0, g.W, g.C)) -
+                    mju_compliantMuscleFp0Ext(l0, 0.5*g.W, 1 - g.W);
+      EXPECT_NEAR(d->muscle_l_ce[0], l_mtu - l_slack, 1e-12) << "l0=" << l0;
+      EXPECT_NEAR(d->muscle_F_mtu[0], 4000*std::fmax(pull, 0), 1e-9*4000)
+          << "l0=" << l0 << " qvel=" << qvel;
+      if (qvel == 0 && l0 > 0.5) {
+        EXPECT_GT(std::fabs(dc->muscle_l_ce[0] - (l_mtu - l_slack)), 1e-4)
+            << "without the flag the tendon is compliant, l0=" << l0;
+      }
+    }
+  }
+
+  mj_deleteData(dc);
+  mj_deleteData(d);
+  mj_deleteModel(compliant);
+  mj_deleteModel(rigid);
+}
+
+
+TEST_F(CompliantMuscleTest, DeclaredRigidTendonIsABoolean) {
+  for (const char* bad : {"0.5", "2", "-1", "inf"}) {
+    char error[1024] = "";
+    mjModel* m = LoadModelFromString(HangingMuscle(std::string(kSol) + " 0 0 " + bad), error,
+                                     sizeof(error));
+    EXPECT_THAT(m, IsNull()) << bad;
+    EXPECT_THAT(std::string(error), HasSubstr("gainprm[11] (rigid tendon) must be 0 or 1")) << bad;
+    if (m) mj_deleteModel(m);
+  }
+
+  mjModel* m = LoadModelFromString(HangingMuscle(std::string(kSol) + " 0 0 1"));
+  ASSERT_THAT(m, NotNull());
+  mjData* d = mj_makeData(m);
+  m->actuator_gainprm[11] = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_THAT(MjuErrorMessageFrom(mj_resetData)(m, d), HasSubstr("must be 0 or 1"));
+  mj_deleteData(d);
+  mj_deleteModel(m);
+}
+
+
+// ------------------------------------------------------------------------------------------
 // gainprm validation.
 
-// Slots 9 and 10 come as a pair, positive and finite; slots 11-31 are not parameters at all.
+// Slots 9 and 10 come as a pair, positive and finite; slots 12-31 are not parameters at all.
 // A build that ignored either would run a different muscle from the one declared, silently.
 TEST_F(CompliantMuscleTest, RejectsMalformedParallelElementAndUnusedSlots) {
   // slots 9 .. 31 with only `slot` set
@@ -560,9 +658,9 @@ TEST_F(CompliantMuscleTest, RejectsMalformedParallelElementAndUnusedSlots) {
       {"negative E_REF_PE", " 1.2376 -0.3815",  "must both be 0"},
       {"infinite L_PE0",    " inf 0.3815",      "must both be 0"},
       {"infinite E_REF_PE", " 1.2376 inf",      "must both be 0"},
-      {"slot 11",           only(11, "0.5"),    "gainprm[11] is not a compliant_mtu parameter"},
-      {"slot 11, own PE",   std::string(kOwnPe) + " 0.5",
-                                                "gainprm[11] is not a compliant_mtu parameter"},
+      {"slot 12",           only(12, "0.5"),    "gainprm[12] is not a compliant_mtu parameter"},
+      {"slot 12, own PE",   std::string(kOwnPe) + " 1 0.5",
+                                                "gainprm[12] is not a compliant_mtu parameter"},
       {"slot 31",           only(31, "1"),      "gainprm[31] is not a compliant_mtu parameter"},
   };
 

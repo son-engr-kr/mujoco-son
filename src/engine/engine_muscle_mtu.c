@@ -288,6 +288,7 @@ typedef struct mjMtuParams_ {
   mjtNum tol;        // Newton residual tolerance
   mjtNum lce_min;    // lower clamp on l_ce
   int hyfydy;        // 1 = Hyfydy polynomial curves, 0 = Millard table
+  int rigid_declared;  // ignore_tendon_compliance: the model says the tendon is rigid
   const mjCurveTable* curve[mjNMUSCLECURVE];   // NULL for a Hyfydy muscle
 } mjMtuParams;
 
@@ -367,6 +368,7 @@ static void mtuGetParams(const mjModel* m, const mjData* d, int id, mjMtuParams*
   p->beta = prm[mjMTU_BETA];
   p->tol = prm[mjMTU_TOL];
   p->min_act = prm[mjMTU_MINACT];
+  p->rigid_declared = prm[mjMTU_IGNORE_TENDON_COMPLIANCE] == 1;
 
   mjtNum phi_opt = prm[mjMTU_PENNATION];
   p->pen_h = phi_opt != 0 ? p->l_opt*mju_sin(phi_opt) : 0;   // the common case is unpennated
@@ -409,29 +411,39 @@ static void mtuCheckParams(const mjModel* m, int id, const mjMtuParams* p) {
     mju_error("%s actuator %d: gainprm[7] (minimum_activation) must be <= 1", kind, id);
   }
 
+  // OpenSim's ignore_tendon_compliance is a boolean; anything but 0 or 1 is a mistake, not a
+  // degree of rigidity
+  mjtNum rigid = prm[mjMTU_IGNORE_TENDON_COMPLIANCE];
+  if (rigid != 0 && rigid != 1) {
+    mju_error("%s actuator %d: gainprm[19] (ignore_tendon_compliance) must be 0 or 1; got %g",
+              kind, id, rigid);
+  }
+
   // Hyfydy's curves are published polynomials with no per-muscle shape. Silently ignoring a
-  // shape parameter someone set would hide a modelling mistake, so reject it.
+  // shape parameter someone set would hide a modelling mistake, so reject it. Slot 19 is not a
+  // shape parameter but the tendon model, which both models have.
   if (p->hyfydy) {
     for (int k = 8; k < mjNGAIN; k++) {
-      if (prm[k] != 0) {
+      if (k != mjMTU_IGNORE_TENDON_COMPLIANCE && prm[k] != 0) {
         mju_error("hyfydy_mtu actuator %d: gainprm[%d] is a Millard curve shape parameter; "
                   "Hyfydy's curves are fixed polynomials with no per-muscle shape", id, k);
       }
     }
-  } else if (prm[mjMTU_AFL_RESERVED12] != 0 || prm[mjMTU_AFL_RESERVED13] != 0 ||
-             prm[mjMTU_PFL_RESERVED19] != 0) {
+  } else if (prm[mjMTU_AFL_RESERVED12] != 0 || prm[mjMTU_AFL_RESERVED13] != 0) {
     // slot 12 is OpenSim's ActiveForceLengthCurve minimum_value, which
     // Millard2012EquilibriumMuscle forces to 0 for the damped model this implements
-    mju_error("millard_mtu actuator %d: gainprm[12], [13] and [19] are reserved and must be 0",
-              id);
-  } else if (p->beta > 0 && (prm[mjMTU_FV_DYDXC] != 0 || prm[mjMTU_FV_DYDXE] != 0)) {
-    // With fiber damping, Millard2012EquilibriumMuscle's damped model sets both at-vmax slopes of
-    // the force-velocity curve to 0, whatever the file says, and only logs that it did. Doing the
-    // same silently would run a curve other than the one declared, so refuse it instead.
+    mju_error("millard_mtu actuator %d: gainprm[12] and [13] are reserved and must be 0", id);
+  } else if ((p->beta > 0 || p->rigid_declared) &&
+             (prm[mjMTU_FV_DYDXC] != 0 || prm[mjMTU_FV_DYDXE] != 0)) {
+    // Millard2012EquilibriumMuscle runs its damped-model branch unless the tendon is compliant
+    // AND the fiber undamped, and that branch sets both at-vmax slopes of the force-velocity curve
+    // to 0, whatever the file says, and only logs that it did. Doing the same silently would run a
+    // curve other than the one declared, so refuse it instead.
     mju_error("millard_mtu actuator %d: gainprm[25] (concentric_slope_at_vmax) and gainprm[28] "
-              "(eccentric_slope_at_vmax) must be 0 with fiber damping, as OpenSim's damped model "
-              "sets them; got %g and %g. A negative gainprm[5] selects the undamped model",
-              id, prm[mjMTU_FV_DYDXC], prm[mjMTU_FV_DYDXE]);
+              "(eccentric_slope_at_vmax) must be 0 with fiber damping or a rigid tendon, as "
+              "OpenSim's damped model sets them; got %g and %g. A negative gainprm[5] with a "
+              "compliant tendon selects the undamped model", id, prm[mjMTU_FV_DYDXC],
+              prm[mjMTU_FV_DYDXE]);
   }
 
   if (m->actuator_trntype[id] != mjTRN_TENDON && m->actuator_trntype[id] != mjTRN_JOINT &&
@@ -676,12 +688,12 @@ static mjtNum mtuSolveIsometric(mjtNum l_mtu, mjtNum A,
 }
 
 
-//------------------------------ rigid-tendon fallback ----------------------------------------------
+//------------------------------ rigid tendon ---------------------------------------------------------
 
-// A tendon much shorter than the fiber makes the series-elastic normalization l_T/l_slack
-// singular and the equilibrium ill-conditioned, for no physical gain: the tendon's stretch is
-// negligible against the fiber's operating range. Below this ratio the tendon is treated as
-// inextensible.
+// The tendon is inextensible when the model declares it, with OpenSim's ignore_tendon_compliance
+// in gainprm[19], and otherwise below this ratio: a tendon much shorter than the fiber makes the
+// series-elastic normalization l_T/l_slack singular and the equilibrium ill-conditioned, for no
+// physical gain, since its stretch is negligible against the fiber's operating range.
 #define mjMTU_RIGID_RATIO 0.05
 
 
@@ -704,8 +716,8 @@ static mjtNum mtuSolveIsometric(mjtNum l_mtu, mjtNum A,
 // NOTE for hyfydy_mtu: the Hyfydy manual documents no rigid-tendon variant -- its tendon is
 // always the compliant quadratic. This path therefore evaluates Hyfydy's curves inside OpenSim's
 // rigid-tendon formulation, which is our extension and not something Hyfydy defines. It exists so
-// a short-tendon muscle degrades gracefully instead of stalling the solver; a model that cares
-// about Hyfydy parity should not be in this regime.
+// a short-tendon muscle degrades gracefully instead of stalling the solver, and so a muscle can
+// declare a rigid tendon; a model that cares about Hyfydy parity should not be in this regime.
 static mjtNum mtuRigidForce(mjtNum A, mjtNum l_mtu, mjtNum v_mtu, const mjMtuParams* p,
                             mjtNum* l_ce_out, mjtNum* l_T_out, mjtNum* v_ce_out,
                             mjtNum* dF_dvmtu) {
@@ -771,8 +783,10 @@ static mjtNum mtuRigidForce(mjtNum A, mjtNum l_mtu, mjtNum v_mtu, const mjMtuPar
 }
 
 
+// Rigid when the model says so -- OpenSim's ignore_tendon_compliance, gainprm[19] -- or when the
+// tendon is too short for the compliant solve to be worth its conditioning.
 static int mtuIsRigid(const mjMtuParams* p) {
-  return p->l_slack < mjMTU_RIGID_RATIO*p->l_opt;
+  return p->rigid_declared || p->l_slack < mjMTU_RIGID_RATIO*p->l_opt;
 }
 
 

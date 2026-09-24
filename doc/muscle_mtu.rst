@@ -179,9 +179,9 @@ default is itself zero are ones for which zero is also the value you would want,
      - n/a
      - 0, 0.7, 0.2, 2/(e1-e0), 0.75
    * - 19
-     - reserved, must be 0
-     -
-     -
+     - ``ignore_tendon_compliance``, 0 or 1 (a ``Muscle`` property, not a curve shape)
+     - n/a (Hyfydy's tendon is always compliant)
+     - 0
    * - 20-23
      - ``TendonForceLengthCurve``: ``strain_at_one_norm_force``,
        ``stiffness_at_one_norm_force``, ``norm_force_at_toe_end``, ``curviness``
@@ -195,9 +195,10 @@ default is itself zero are ones for which zero is also the value you would want,
      - n/a
      - 1.4, 0, 0.25, 5, 0, 0.15, 0.6, 0.9
 
-Slots 8-31 are curve **shape** parameters and apply to ``millard_mtu`` only. Hyfydy's curves are
-published polynomials with no per-muscle shape, so ``hyfydy_mtu`` rejects a non-zero value there
-rather than silently ignoring one that was meant to have an effect.
+Slots 8-31 are curve **shape** parameters and apply to ``millard_mtu`` only, except slot 19. Hyfydy's
+curves are published polynomials with no per-muscle shape, so ``hyfydy_mtu`` rejects a non-zero
+value there rather than silently ignoring one that was meant to have an effect. Slot 19 is the
+tendon model, which both take.
 
 Notes on individual parameters:
 
@@ -213,10 +214,17 @@ Notes on individual parameters:
    from zero. It is a well-posedness condition, not a decoration. It is also what lets an inactive
    muscle be a damper: the term is not scaled by activation.
 
-   With damping, ``concentric_slope_at_vmax`` and ``eccentric_slope_at_vmax`` (slots 25 and 28)
-   must be 0. OpenSim's damped model sets both to 0 whatever the file declares and only logs that
-   it did; here a non-zero value is refused at load instead of being replaced. The undamped model
-   keeps them.
+   With damping, or with a declared rigid tendon, ``concentric_slope_at_vmax`` and
+   ``eccentric_slope_at_vmax`` (slots 25 and 28) must be 0. OpenSim runs its damped-model branch
+   unless the tendon is compliant and the fiber undamped, and that branch sets both to 0 whatever
+   the file declares and only logs that it did. Here a non-zero value is refused at load instead of
+   being replaced. The undamped model on a compliant tendon keeps them.
+
+``ignore_tendon_compliance`` (slot 19)
+   OpenSim's ``Muscle`` property of the same name. 1 makes the tendon inextensible at any slack
+   length, on the rigid-tendon path described under :ref:`mtuNumerics`; 0 leaves it to the
+   0.05 ratio rule. Any other value is refused. It is for a muscle its source declares rigid, whose
+   MJCF path length forces a ``tendon_slack_length`` too long for the ratio rule to catch.
 
 ``min_norm_active_fiber_length`` (slot 8)
    Zero means OpenSim's 0.4441 here as in every other slot, so a fit that drives this toward
@@ -259,7 +267,7 @@ compliant_mtu parameters
 ------------------------
 
 ``compliant_mtu`` is Geyer & Herr (2010)'s muscle-tendon unit as Seungmoon Song implements it
-(``seungmoon_muscle.py``). It reads eleven ``gainprm`` slots. Unlike ``millard_mtu``, zero is not
+(``seungmoon_muscle.py``). It reads twelve ``gainprm`` slots. Unlike ``millard_mtu``, zero is not
 a default in slots 0-8: each is used as written.
 
 .. list-table::
@@ -314,7 +322,11 @@ a default in slots 0-8: each is used as written.
      - ``E_REF_PE``
      - parallel element reference strain
      - ``W``
-   * - 11-31
+   * - 11
+     - rigid tendon
+     - 0 or 1: ``millard_mtu``'s ``ignore_tendon_compliance``
+     - 0
+   * - 12-31
      - reserved
      - must be 0
      -
@@ -357,8 +369,8 @@ it is.
 for a muscle whose passive curve was fitted to a source model's rather than tied to ``W``. The two
 come as a pair: both 0 is Geyer & Herr's element, slack at ``l_opt`` with reference strain ``W``,
 and evaluates bit for bit as it did before these slots existed. Otherwise both must be positive
-and finite. One without the other, a negative or non-finite value, or anything non-zero in slots
-11-31 fails the load. A build that ignored them would run a different muscle from the one
+and finite. One without the other, a negative or non-finite value, anything but 0 or 1 in slot 11,
+or anything non-zero in slots 12-31 fails the load. A build that ignored them would run a different muscle from the one
 declared, and builds before ``son4.0a7`` do exactly that, silently.
 
 At zero activation and rest the parallel element and the tendon are two quadratic springs in
@@ -372,8 +384,8 @@ against:
    \qquad (l_{MTU} > l_{slack} + l_{opt} L_{PE0})
 
 The slots are validated at ``mj_resetData``, which the compiler also runs, and re-read every step.
-A tendon shorter than ``0.05 * l_opt`` is treated as rigid, as for the other two models. The fiber
-is then ``l_ce = l_MTU - l_slack`` and the force is
+A tendon declared rigid (slot 11) or shorter than ``0.05 * l_opt`` is treated as rigid, as for the
+other two models. The fiber is then ``l_ce = l_MTU - l_slack`` and the force is
 :math:`F_{max} \max(0,\, f_V (f_{PE} + a f_L) - f_{BE})`, floored at zero because a rigid tendon
 cannot push either.
 
@@ -536,9 +548,10 @@ from the *clamped* sine rather than being switched off in that branch, which kee
 across the knife edge. :math:`1-\sin^2\phi_{max}` is 0.01, so nothing divides by a vanishing root
 there.
 
-**Rigid-tendon fallback.** When ``tendon_slack_length < 0.05 * optimal_fiber_length`` the
-series-elastic normalization is ill-conditioned for no physical gain, and the tendon is treated as
-inextensible. This is OpenSim's own ``ignore_tendon_compliance`` path, rule for rule:
+**Rigid tendon.** When ``ignore_tendon_compliance`` (slot 19) is 1, or when
+``tendon_slack_length < 0.05 * optimal_fiber_length``, where the series-elastic normalization is
+ill-conditioned for no physical gain, the tendon is treated as inextensible. This is OpenSim's own
+``ignore_tendon_compliance`` path, rule for rule:
 
 * ``l_ce = clamp(sqrt((l_MTU - l_slack)^2 + h^2), lce_min)``
 * ``cos(phi) = cos(asin(h/l_ce))``, which is never negative — it is not signed by the path
@@ -551,8 +564,8 @@ inextensible. This is OpenSim's own ``ignore_tendon_compliance`` path, rule for 
 
 The Hyfydy manual documents no rigid-tendon variant — its tendon is always the compliant quadratic
 — so for ``hyfydy_mtu`` this path evaluates Hyfydy's curves inside OpenSim's formulation. It exists
-so a short-tendon muscle degrades gracefully rather than stalling the solver; a model that cares
-about Hyfydy parity should not be in this regime.
+so a short-tendon muscle degrades gracefully rather than stalling the solver, and so a muscle can
+declare its tendon rigid; a model that cares about Hyfydy parity should not be in this regime.
 
 **The reported fiber velocity is the implicit one.** ``act_dot`` for the fiber is
 ``(l_ce* - l_ce)/dt``, where ``l_ce*`` is the backward-Euler solution — not the instantaneous

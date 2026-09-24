@@ -1483,6 +1483,180 @@ TEST_F(MuscleMtuTest, TautRigidTendonKeepsItsVelocityDependence) {
 }
 
 
+// ------------------------------------------------------------------------------------------
+// ignore_tendon_compliance (gainprm[19]).
+
+// gainprm with slot 19 set; `mech` is slots 0-7.
+std::string WithRigidFlag(const char* mech, const char* flag) {
+  std::string prm = mech;
+  for (int k = 8; k < 19; k++) prm += " 0";
+  return prm + " " + flag;
+}
+
+
+// Where the ratio rule already makes the tendon rigid, declaring it rigid must change nothing, bit
+// for bit: the flag selects the same path, it does not add one.
+TEST_F(MuscleMtuTest, DeclaredRigidTendonIsTheRatioRulesPath) {
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    const char* mech = "3000 0.15 0.005 10 0.15 0.1 0 0";   // l_slack < 0.05 l_opt
+    mjModel* m0 = LoadModelFromString(HangingMuscle(gain, WithRigidFlag(mech, "0").c_str()));
+    mjModel* m1 = LoadModelFromString(HangingMuscle(gain, WithRigidFlag(mech, "1").c_str()));
+    ASSERT_THAT(m0, ::testing::NotNull()) << gain;
+    ASSERT_THAT(m1, ::testing::NotNull()) << gain;
+    mjData* d0 = mj_makeData(m0);
+    mjData* d1 = mj_makeData(m1);
+    for (double qpos : {0.0, 0.05, 0.1}) {
+      for (double qvel : {-0.2, 0.0, 0.3}) {
+        for (auto [m, d] : {std::pair{m0, d0}, std::pair{m1, d1}}) {
+          mj_resetData(m, d);
+          d->qpos[0] = qpos;
+          d->qvel[0] = qvel;
+          d->act[1] = 0.6;
+          mj_forward(m, d);
+        }
+        EXPECT_EQ(d0->muscle_F_mtu[0], d1->muscle_F_mtu[0]) << gain;
+        EXPECT_EQ(d0->muscle_l_ce[0], d1->muscle_l_ce[0]) << gain;
+        EXPECT_EQ(d0->act_dot[0], d1->act_dot[0]) << gain;
+        EXPECT_EQ(mju_mtuMuscleForceVel(m0, d0, 0), mju_mtuMuscleForceVel(m1, d1, 0)) << gain;
+      }
+    }
+    mj_deleteData(d1);
+    mj_deleteData(d0);
+    mj_deleteModel(m1);
+    mj_deleteModel(m0);
+  }
+}
+
+
+// Declared rigid, the tendon is inextensible at any slack length: at l_slack = 0.7 l_opt, where the
+// ratio rule would solve a compliant tendon, the fiber is OpenSim's calcFiberLength,
+// hypot(l_MTU - l_slack, h), and the force its rigid-tendon fiber force.
+TEST_F(MuscleMtuTest, DeclaredRigidTendonAtAnySlackLength) {
+  struct Case { const char* gain; double pennation; };
+  const Case cases[] = {{"millard_mtu", 0}, {"millard_mtu", 0.3}, {"hyfydy_mtu", 0},
+                        {"hyfydy_mtu", 0.3}};
+  const double l_opt = 0.15, l_slack = 0.105, beta = 0.1, v_max = 10, A = 0.6;
+
+  for (const Case& c : cases) {
+    std::string mech = "3000 0.15 0.105 10 " + std::to_string(c.pennation) + " 0.1 0 0";
+    mjModel* rigid = LoadModelFromString(
+        HangingMuscle(c.gain, WithRigidFlag(mech.c_str(), "1").c_str()));
+    mjModel* compliant = LoadModelFromString(
+        HangingMuscle(c.gain, WithRigidFlag(mech.c_str(), "0").c_str()));
+    ASSERT_THAT(rigid, ::testing::NotNull()) << c.gain;
+    ASSERT_THAT(compliant, ::testing::NotNull()) << c.gain;
+    mjData* d = mj_makeData(rigid);
+    mjData* dc = mj_makeData(compliant);
+    const double h = l_opt*std::sin(c.pennation);
+
+    auto curve = [&](int k, double x, double* deriv) {
+      return c.gain[0] == 'h' ? mju_hyfydyCurve(k, x, deriv)
+                              : mju_millardCurve(k, x, nullptr, deriv);
+    };
+
+    for (double l_mtu : {l_slack + 0.9*l_opt, l_slack + 1.1*l_opt, l_slack + 1.3*l_opt}) {
+      for (double qvel : {0.0, 0.2}) {                    // qvel > 0 shortens the path
+        for (auto [m, dd] : {std::pair{rigid, d}, std::pair{compliant, dc}}) {
+          mj_resetData(m, dd);
+          dd->qpos[0] = 0.3 - l_mtu;
+          dd->qvel[0] = qvel;
+          dd->act[1] = A;
+          mj_forward(m, dd);
+        }
+        double l_ce = std::hypot(l_mtu - l_slack, h);
+        double cos_phi = std::sqrt(1 - (h/l_ce)*(h/l_ce));
+        EXPECT_NEAR(d->muscle_l_ce[0], l_ce, 1e-12) << c.gain << " l_mtu=" << l_mtu;
+        EXPECT_NEAR(d->muscle_l_se[0], l_mtu - l_ce*cos_phi, 1e-12) << c.gain;
+
+        double v0 = d->actuator_velocity[0]*cos_phi/(v_max*l_opt);
+        double l0 = l_ce/l_opt;
+        double fiber = A*curve(mjMUSCLECURVE_ACTIVE_FL, l0, nullptr)*
+                       curve(mjMUSCLECURVE_FV, v0, nullptr) +
+                       curve(mjMUSCLECURVE_PASSIVE_FL, l0, nullptr) + beta*v0;
+        EXPECT_NEAR(d->muscle_F_mtu[0], 3000*std::fmax(fiber, 0)*cos_phi, 1e-9*3000)
+            << c.gain << " l_mtu=" << l_mtu << " qvel=" << qvel;
+
+        // and the flag is what did it: the same muscle without it solves a compliant tendon
+        EXPECT_GT(std::fabs(dc->muscle_l_ce[0] - l_ce), 1e-4) << c.gain << " l_mtu=" << l_mtu;
+      }
+    }
+
+    // the rigid path's velocity derivative, against a central difference
+    auto force_at = [&](double qvel) {
+      mj_resetData(rigid, d);
+      d->qpos[0] = 0.3 - (l_slack + 1.1*l_opt);
+      d->qvel[0] = qvel;
+      d->act[1] = A;
+      mj_forward(rigid, d);
+      return d->actuator_force[0];
+    };
+    const double dq = 1e-6;
+    double f_plus = force_at(0.1 + dq), v_plus = d->actuator_velocity[0];
+    double f_minus = force_at(0.1 - dq), v_minus = d->actuator_velocity[0];
+    force_at(0.1);
+    double analytic = mju_mtuMuscleForceVel(rigid, d, 0);
+    EXPECT_NEAR(analytic, (f_plus - f_minus)/(v_plus - v_minus), 1e-5*std::fabs(analytic))
+        << c.gain;
+
+    mj_deleteData(dc);
+    mj_deleteData(d);
+    mj_deleteModel(compliant);
+    mj_deleteModel(rigid);
+  }
+}
+
+
+// OpenSim's ignore_tendon_compliance is a boolean. hyfydy_mtu, which refuses every curve shape
+// slot, takes this one.
+TEST_F(MuscleMtuTest, IgnoreTendonComplianceIsABoolean) {
+  const char* mech = "3000 0.15 0.105 10 0 0.1 0 0";
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    for (const char* bad : {"0.5", "2", "-1", "inf"}) {
+      char error[1024] = "";
+      mjModel* m = LoadModelFromString(HangingMuscle(gain, WithRigidFlag(mech, bad).c_str()),
+                                       error, sizeof(error));
+      EXPECT_THAT(m, ::testing::IsNull()) << gain << " " << bad;
+      EXPECT_THAT(std::string(error), ::testing::HasSubstr("must be 0 or 1")) << gain << " " << bad;
+      if (m) mj_deleteModel(m);
+    }
+
+    // NaN cannot come through MJCF quietly; it can through an edited model
+    mjModel* m = LoadModelFromString(HangingMuscle(gain, WithRigidFlag(mech, "1").c_str()));
+    ASSERT_THAT(m, ::testing::NotNull()) << gain;
+    mjData* d = mj_makeData(m);
+    m->actuator_gainprm[mjMTU_IGNORE_TENDON_COMPLIANCE] = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_THAT(MjuErrorMessageFrom(mj_resetData)(m, d), ::testing::HasSubstr("must be 0 or 1"))
+        << gain;
+    mj_deleteData(d);
+    mj_deleteModel(m);
+  }
+}
+
+
+// OpenSim runs its damped-model branch, which zeroes both at-vmax force-velocity slopes, unless
+// the tendon is compliant AND the fiber undamped. So a declared rigid tendon refuses them even
+// without damping.
+TEST_F(MuscleMtuTest, DeclaredRigidTendonRefusesSlopesAtVmaxEvenUndamped) {
+  // undamped, slot 19 as given, slot 25 = 0.2
+  auto prm = [](const char* flag) {
+    std::string p = "3000 0.15 0.105 10 0 -1 0 0";
+    for (int k = 8; k < 19; k++) p += " 0";
+    p += std::string(" ") + flag + " 0 0 0 0 0 0.2";
+    return p;
+  };
+  char error[1024] = "";
+  mjModel* m = LoadModelFromString(HangingMuscle("millard_mtu", prm("1").c_str()), error,
+                                   sizeof(error));
+  EXPECT_THAT(m, ::testing::IsNull());
+  EXPECT_THAT(std::string(error), ::testing::HasSubstr("with fiber damping or a rigid tendon"));
+  if (m) mj_deleteModel(m);
+
+  m = LoadModelFromString(HangingMuscle("millard_mtu", prm("0").c_str()));
+  EXPECT_THAT(m, ::testing::NotNull()) << "compliant and undamped keeps the slopes";
+  if (m) mj_deleteModel(m);
+}
+
+
 // A stiff, short tendon -- strain_at_one_norm_force 3.4e-4 and stiffness 3650, as ARMS's
 // lumbricals come out when their tendon is kept at the source's stiffness -- builds in OpenSim for
 // every toe force and curviness. The bake used to refuse a third of them on a slope cross-check

@@ -5,6 +5,31 @@ Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog i
 
 ## Unreleased
 
+### Added: a declared rigid tendon, OpenSim's `ignore_tendon_compliance`
+
+The rigid-tendon path was chosen by one rule, `l_slack < 0.05 l_opt`. A muscle whose source
+declares `ignore_tendon_compliance` but whose MJCF path is longer than the source's needs a longer
+`l_slack` to match the path: 14-43 mm for ARMS's four lumbricals and MoBL-ARMS's PECM1, 0.12-0.71
+`l_opt`. That crosses the rule, and the muscle got a compliant tendon it was never declared to have.
+`ignore_tendon_compliance` is a real property of `Millard2012EquilibriumMuscle` and was missing from
+the 1:1 map.
+
+- `millard_mtu` and `hyfydy_mtu`: `gainprm[19]`, formerly reserved, is `ignore_tendon_compliance`.
+  0 keeps the ratio rule and 1 selects the existing rigid-tendon path at any slack length. Anything
+  else fails the load. `hyfydy_mtu` still refuses every curve-shape slot and accepts this one.
+- `compliant_mtu`: `gainprm[11]`, formerly required to be 0, is the same flag. The tendon is rigid
+  when it is 1 or when the ratio rule says so.
+
+Where the ratio rule already makes a tendon rigid, declaring it rigid changes nothing, bit for bit,
+for all three models. With the flag at 1 and `l_slack` = 0.7 `l_opt`, the fiber is OpenSim's
+`hypot(l_MTU - l_slack, h)` and the force is its rigid-tendon fiber force, and the rigid velocity
+derivative matches a central difference.
+
+A declared rigid tendon also makes slots 25 and 28 (`concentric_slope_at_vmax`,
+`eccentric_slope_at_vmax`) required to be 0, even without damping. OpenSim runs its damped-model
+branch, which sets both to 0, unless the tendon is compliant and the fiber undamped
+(`Millard2012EquilibriumMuscle.cpp`, `buildMuscle`). `son4.0a8` refused them only with damping.
+
 ### Fixed: a taut rigid tendon was sometimes treated as buckled
 
 On the rigid-tendon path `l_T = l_MTU - l_ce cos(phi)` equals `l_slack` on a taut tendon only up
@@ -14,6 +39,13 @@ which drops `f_V` and the fiber damping from the force and zeroes `d(force)/d(ve
 pennated rigid tendon (pennation 0.15, `l_slack` 0.033 `l_opt`), `son4.0a8` did this at 383 of 1000
 taut, moving points, for `millard_mtu` and `hyfydy_mtu` alike. It now does it at none. The margin is
 SimTK's `SignificantReal`, `eps^(7/8)` = 2.0e-14. This dates back to `son4.0`.
+
+**What moves against `son4.0a8`.** With every flag at 0, the same grid run against `a8` and this
+build agrees bit for bit for `compliant_mtu` (Geyer's soleus, an own-parallel-element fit, a
+ratio-rigid tendon) and for `millard_mtu` and `hyfydy_mtu` on compliant tendons and on an unpennated
+ratio-rigid tendon. The only differences are on the pennated ratio-rigid tendon, 181 of 652
+outputs per model. They are in the force at points where the path moves, and in the velocity
+derivative at every point that was being called buckled. Fiber lengths are unchanged.
 
 ### Fixed: stiff, short tendon curves refused by a roundoff check
 
