@@ -3,6 +3,20 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## Unreleased
+
+### Fixed: stiff tendon curves were still refused on x86 and MSVC builds
+
+`son4.0a9`'s relaxed slope check compared each end slope with a tolerance relative to that end's
+declared slope. A tendon's start slope is declared 0, so the check there stayed an absolute 1e-8.
+Without fused multiply-adds, which x86 GCC/Clang and MSVC do not emit by default and arm64 Clang
+does, the computed start slope of the stiff tendon (3.4e-4, 3650) is off by up to 2.4e-8, and 60 of
+the 380 shapes were still refused there. The Linux and Windows `a9` wheels refuse them; the macOS
+one does not. CI caught it on every Linux and Windows job. Both ends are now judged against the
+curve's slope scale, the largest of 1, the end slopes and every section's chord. The full suite
+passes built both ways, including with `-ffp-contract=off` on arm64, which reproduces the x86
+failure without the fix.
+
 ## v3.3.3+son4.0a9 — alpha
 
 ### Added: a declared rigid tendon, OpenSim's `ignore_tendon_compliance`

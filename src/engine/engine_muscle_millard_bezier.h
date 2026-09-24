@@ -215,14 +215,21 @@ struct SegFn {
     Check(std::fabs(f.sec.back().x[5] - x1) < 1e-12, "x1 anchor mismatch");
     Check(std::fabs(f.sec.front().y[0] - y0) < 1e-12, "y0 anchor mismatch");
     Check(std::fabs(f.sec.back().y[5] - y1) < 1e-12, "y1 anchor mismatch");
-    // The slopes are compared relative to their size. A slope is a quotient of control-point
-    // differences, and a stiff, short curve -- a tendon with strain_at_one_norm_force 3.4e-4
-    // and stiffness 3650 -- takes those differences over sections 1e-4 wide at x ~ 1, where
-    // they carry ~1e-11 relative roundoff: 3.4e-7 absolute on 3650, which an absolute 1e-8 had
-    // been rejecting although OpenSim builds the curve. A wrong control point is an O(1) error.
-    Check(std::fabs(DerivDyDx(f.sec.front(), 0.0, 1) - dydx0) < 1e-8*std::fmax(1.0, std::fabs(dydx0)),
+    // The slopes are compared relative to the curve's own slope scale: the largest of 1, the two
+    // end slopes and every section's chord. A slope is a quotient of control-point differences,
+    // and a stiff, short curve -- a tendon with strain_at_one_norm_force 3.4e-4 and stiffness
+    // 3650 -- takes those differences over sections 1e-4 wide at x ~ 1, where they carry ~1e-11
+    // of the curve's slope scale in roundoff. That is 3.9e-7 at the stiff end and, at the flat
+    // one, 2.4e-8 on a declared slope of 0 when the compiler does not fuse multiply-adds (x86,
+    // MSVC; arm64 clang does, and shows 5e-13). An absolute 1e-8, or one relative to that end's
+    // slope alone, rejects curves OpenSim builds. A wrong control point is an O(1) error.
+    double scale = std::fmax(1.0, std::fmax(std::fabs(dydx0), std::fabs(dydx1)));
+    for (const CtrlPts& c : f.sec) {
+      scale = std::fmax(scale, std::fabs((c.y[5] - c.y[0])/(c.x[5] - c.x[0])));
+    }
+    Check(std::fabs(DerivDyDx(f.sec.front(), 0.0, 1) - dydx0) < 1e-8*scale,
           "dydx0 anchor mismatch");
-    Check(std::fabs(DerivDyDx(f.sec.back(), 1.0, 1) - dydx1) < 1e-8*std::fmax(1.0, std::fabs(dydx1)),
+    Check(std::fabs(DerivDyDx(f.sec.back(), 1.0, 1) - dydx1) < 1e-8*scale,
           "dydx1 anchor mismatch");
     return f;
   }
