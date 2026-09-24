@@ -3,6 +3,18 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## Unreleased
+
+### Fixed: a taut rigid tendon was sometimes treated as buckled
+
+On the rigid-tendon path `l_T = l_MTU - l_ce cos(phi)` equals `l_slack` on a taut tendon only up
+to roundoff. OpenSim calls the tendon buckled when `l_T < l_slack - SignificantReal`; the port
+compared with `l_slack` itself, so roundoff decided. A "buckled" tendon zeroes the fiber velocity,
+which drops `f_V` and the fiber damping from the force and zeroes `d(force)/d(velocity)`. On a
+pennated rigid tendon (pennation 0.15, `l_slack` 0.033 `l_opt`), `son4.0a8` did this at 383 of 1000
+taut, moving points, for `millard_mtu` and `hyfydy_mtu` alike. It now does it at none. The margin is
+SimTK's `SignificantReal`, `eps^(7/8)` = 2.0e-14. This dates back to `son4.0`.
+
 ## v3.3.3+son4.0a8 — alpha
 
 **`compliant_mtu` dynamics change in this release.** Every `compliant_mtu` model moves, not just

@@ -1453,5 +1453,35 @@ TEST_F(MuscleMtuTest, NearZeroMinActiveFiberLengthEquilibratesPennatedAndNot) {
   }
 }
 
+// A taut rigid tendon is not a buckled one. On the rigid path l_T is l_slack only up to the
+// roundoff of subtracting l_ce cos(phi) back out of l_MTU, and OpenSim allows SignificantReal for
+// it; without that margin the roundoff decided, and a pennated rigid tendon lost its fiber
+// velocity -- f_V and the damping with it -- at 383 of these 1000 moving points.
+TEST_F(MuscleMtuTest, TautRigidTendonKeepsItsVelocityDependence) {
+  for (const char* gain : {"millard_mtu", "hyfydy_mtu"}) {
+    mjModel* m = LoadModelFromString(HangingMuscle(gain, "3000 0.15 0.005 10 0.15 0.1"));
+    ASSERT_THAT(m, ::testing::NotNull()) << gain;
+    mjData* d = mj_makeData(m);
+    int flat = 0;
+    for (int i = 0; i < 1000; i++) {
+      double qpos = -0.05 + 0.2*i/1000.0;       // fiber from 1 to 2.3 l_opt, tendon taut
+      double F[2];
+      for (int k = 0; k < 2; k++) {
+        mj_resetData(m, d);
+        d->qpos[0] = qpos;
+        d->qvel[0] = k ? 0.1 : 0;
+        d->act[1] = 0.6;
+        mj_forward(m, d);
+        F[k] = d->muscle_F_mtu[0];
+      }
+      if (F[0] == F[1]) flat++;
+    }
+    EXPECT_EQ(flat, 0) << gain;
+    mj_deleteData(d);
+    mj_deleteModel(m);
+  }
+}
+
+
 }  // namespace
 }  // namespace mujoco

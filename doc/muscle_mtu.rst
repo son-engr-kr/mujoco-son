@@ -543,7 +543,9 @@ inextensible. This is OpenSim's own ``ignore_tendon_compliance`` path, rule for 
 * ``l_ce = clamp(sqrt((l_MTU - l_slack)^2 + h^2), lce_min)``
 * ``cos(phi) = cos(asin(h/l_ce))``, which is never negative — it is not signed by the path
 * ``l_T = l_MTU - l_ce cos(phi)``, reported as such, because a rigid tendon can still go slack
-* if ``l_T < l_slack`` the tendon has buckled: the fiber velocity is zero and ``f_V`` is 1
+* if ``l_T < l_slack - SignificantReal`` the tendon has buckled: the fiber velocity is zero and
+  ``f_V`` is 1. On a taut tendon ``l_T`` is ``l_slack`` only up to roundoff, which is why OpenSim
+  allows SimTK's ``SignificantReal`` (2.0e-14) before it calls the tendon buckled
 * a fiber on or below its lower clamp carries **no force at all**
 * otherwise the fiber force is saturated at zero, so its parallel damping cannot make it push
 

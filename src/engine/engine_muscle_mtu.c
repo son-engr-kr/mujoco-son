@@ -295,6 +295,10 @@ typedef struct mjMtuParams_ {
 // sin(acos(0.1)): OpenSim's MuscleFixedWidthPennationModel maximum pennation angle
 #define mjMTU_SINPHIMAX 0.9949874371066201
 
+// SimTK::SignificantReal for double, eps^(7/8) = eps/sqrt(sqrt(sqrt(eps))): the margin OpenSim's
+// Millard2012EquilibriumMuscle allows before it calls a rigid tendon buckled
+#define mjMTU_SIGNIFICANT_REAL 2.009718347115232e-14
+
 // Left end of Hyfydy's active force-length support; the Millard equivalent is per muscle, being
 // OpenSim's min_norm_active_fiber_length property.
 #define mjMTU_HYFYDY_LCE_MIN mjHYF_r1
@@ -689,7 +693,7 @@ static mjtNum mtuSolveIsometric(mjtNum l_mtu, mjtNum A,
 //   cos(phi) = cos(asin(h/l_ce))                                 ALWAYS >= 0, never signed by the path
 //   l_T    = l_MTU - l_ce cos(phi)                               "necessary even for the rigid
 //                                                                 tendon, as it might have gone slack"
-//   if l_T < l_slack     -> tendon buckling: v_ce = 0, f_V = 1
+//   if l_T < l_slack - SignificantReal -> tendon buckling: v_ce = 0, f_V = 1
 //   else                 -> v_ce = v_MTU cos(phi)
 //   if fiber clamped     -> ALL forces are zero. isFiberStateClamped is
 //                           (l_ce <= lce_min and v_ce <= 0) or l_ce < lce_min
@@ -720,8 +724,11 @@ static mjtNum mtuRigidForce(mjtNum A, mjtNum l_mtu, mjtNum v_mtu, const mjMtuPar
   mjtNum cos_phi = mju_sqrt(1 - sp*sp);
   mjtNum l_T = l_mtu - l_ce*cos_phi;
 
-  // a buckled tendon cannot impose a velocity on the fiber
-  int buckled = l_T < p->l_slack;
+  // A buckled tendon cannot impose a velocity on the fiber. On a taut rigid tendon l_T IS l_slack,
+  // up to the roundoff of subtracting l_ce cos(phi) back out of l_MTU, so OpenSim tests against
+  // l_slack less SimTK::SignificantReal. Without that margin the roundoff decided: a8 called 383 of
+  // 1000 taut, moving points on a pennated rigid tendon buckled and dropped f_V and the damping.
+  int buckled = l_T < p->l_slack - mjMTU_SIGNIFICANT_REAL;
   mjtNum v_ce = buckled ? 0 : v_mtu*cos_phi;
 
   if (l_ce_out) *l_ce_out = l_ce;
