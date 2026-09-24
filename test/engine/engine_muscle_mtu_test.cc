@@ -1483,5 +1483,30 @@ TEST_F(MuscleMtuTest, TautRigidTendonKeepsItsVelocityDependence) {
 }
 
 
+// A stiff, short tendon -- strain_at_one_norm_force 3.4e-4 and stiffness 3650, as ARMS's
+// lumbricals come out when their tendon is kept at the source's stiffness -- builds in OpenSim for
+// every toe force and curviness. The bake used to refuse a third of them on a slope cross-check
+// that was absolute, and so tripped on roundoff. It must build them all, and reproduce them.
+TEST_F(MuscleMtuTest, StiffShortTendonCurvesBuild) {
+  double worst = 0;
+  for (int i = 0; i < 19; i++) {
+    for (int j = 0; j < 20; j++) {
+      double f_toe = 0.05 + 0.05*i, curviness = 0.05 + 0.05*j;
+      millard::SegFn exact = millard::TendonForceLength(3.4e-4, 3650, f_toe, curviness);
+      std::array<mjtNum, mjNGAIN> prm = {};
+      prm[mjMTU_TFL_E1] = 3.4e-4;
+      prm[mjMTU_TFL_KISO] = 3650;
+      prm[mjMTU_TFL_FTOE] = f_toe;
+      prm[mjMTU_TFL_CURV] = curviness;
+      for (int k = 0; k <= 400; k++) {
+        double x = exact.x0 + (exact.x1 - exact.x0)*((k + 0.5)/401.0);
+        double got = mju_millardCurve(mjMUSCLECURVE_TENDON_FL, x, prm.data(), nullptr);
+        worst = std::fmax(worst, std::fabs(got - exact.Value(x)));
+      }
+    }
+  }
+  EXPECT_LT(worst, 1e-7);
+}
+
 }  // namespace
 }  // namespace mujoco

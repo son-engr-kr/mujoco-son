@@ -15,6 +15,18 @@ pennated rigid tendon (pennation 0.15, `l_slack` 0.033 `l_opt`), `son4.0a8` did 
 taut, moving points, for `millard_mtu` and `hyfydy_mtu` alike. It now does it at none. The margin is
 SimTK's `SignificantReal`, `eps^(7/8)` = 2.0e-14. This dates back to `son4.0`.
 
+### Fixed: stiff, short tendon curves refused by a roundoff check
+
+The Bézier port cross-checks each curve's end slopes against the declared ones. The check was
+absolute, 1e-8. A tendon with `strain_at_one_norm_force` 3.4e-4 and `stiffness_at_one_norm_force`
+3650 (ARMS's `LU_RB5`, when its tendon is kept at the source's stiffness) takes its slopes from
+control points 1e-4 apart at `x ~ 1`. The slopes then carry 1e-11 relative roundoff, 3.4e-7 on 3650.
+Over 380 toe forces and curvinesses at that strain and stiffness, 129 were refused with
+`dydx1 anchor mismatch`, and OpenSim 4.6 builds all 380. The check is now relative,
+`1e-8 * max(1, |slope|)`, which still catches the O(1) error a wrong control point makes. All 380
+build. The baked table reproduces the exact Bézier to 4.2e-8 over 4001 points per shape, and
+OpenSim 4.6's own evaluation to 4.1e-10 over 39.
+
 ## v3.3.3+son4.0a8 — alpha
 
 **`compliant_mtu` dynamics change in this release.** Every `compliant_mtu` model moves, not just

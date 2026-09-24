@@ -215,8 +215,15 @@ struct SegFn {
     Check(std::fabs(f.sec.back().x[5] - x1) < 1e-12, "x1 anchor mismatch");
     Check(std::fabs(f.sec.front().y[0] - y0) < 1e-12, "y0 anchor mismatch");
     Check(std::fabs(f.sec.back().y[5] - y1) < 1e-12, "y1 anchor mismatch");
-    Check(std::fabs(DerivDyDx(f.sec.front(), 0.0, 1) - dydx0) < 1e-8, "dydx0 anchor mismatch");
-    Check(std::fabs(DerivDyDx(f.sec.back(), 1.0, 1) - dydx1) < 1e-8, "dydx1 anchor mismatch");
+    // The slopes are compared relative to their size. A slope is a quotient of control-point
+    // differences, and a stiff, short curve -- a tendon with strain_at_one_norm_force 3.4e-4
+    // and stiffness 3650 -- takes those differences over sections 1e-4 wide at x ~ 1, where
+    // they carry ~1e-11 relative roundoff: 3.4e-7 absolute on 3650, which an absolute 1e-8 had
+    // been rejecting although OpenSim builds the curve. A wrong control point is an O(1) error.
+    Check(std::fabs(DerivDyDx(f.sec.front(), 0.0, 1) - dydx0) < 1e-8*std::fmax(1.0, std::fabs(dydx0)),
+          "dydx0 anchor mismatch");
+    Check(std::fabs(DerivDyDx(f.sec.back(), 1.0, 1) - dydx1) < 1e-8*std::fmax(1.0, std::fabs(dydx1)),
+          "dydx1 anchor mismatch");
     return f;
   }
 
