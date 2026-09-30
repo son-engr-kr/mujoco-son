@@ -45,7 +45,8 @@
     X( int,     enableflags       ) \
     X( int,     disableactuator   ) \
     X( int,     sdf_initpoints    ) \
-    X( int,     sdf_iterations    )
+    X( int,     sdf_iterations    ) \
+    X( int,     cmtu_iter         )
 
 
 #define MJOPTION_SCALARS            \
