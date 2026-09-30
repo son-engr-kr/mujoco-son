@@ -61,8 +61,7 @@ std::string HangingMuscle(const std::string& prm, double mass = 20.0) {
   </mujoco>)";
 }
 
-// abd_r of jinsimul's myoleg26 Geyer-equivalent fit, with its own parallel element
-// (data/muscle_fit/geyer_equivalent_myoleg26_extended_pe.csv):
+// abd_r of jinsimul's myoleg26 Geyer-equivalent fit, with its own parallel element:
 // F_max l_opt l_slack v_max W C N K E_REF, then L_PE0 E_REF_PE.
 constexpr double kFmax = 4460.290481, kLopt = 0.0845, kLslack = 0.053;
 constexpr double kW = 0.9219990822, kEref = 0.0492005381;

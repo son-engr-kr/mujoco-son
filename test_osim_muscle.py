@@ -309,7 +309,7 @@ def test_compliant_muscle_equilibrate_binding():
     assert np.isfinite(data.muscle_F_mtu[0])
 
 
-# abd_r of jinsimul's myoleg26 Geyer fit (geyer_equivalent_myoleg26_extended_pe.csv):
+# abd_r of jinsimul's myoleg26 Geyer fit:
 # F_max l_opt l_slack v_max W C N K E_REF, and its own parallel element L_PE0 E_REF_PE.
 _ABD_R = '4460.290481 0.0845 0.053 15 0.9219990822 -2.995732274 1.5 4 0.0492005381'
 _ABD_R_PE = ' 1.237603992 0.3815447921'

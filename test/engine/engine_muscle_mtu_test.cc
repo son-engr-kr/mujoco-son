@@ -1281,10 +1281,10 @@ TEST_F(MuscleMtuTest, DampedModelRefusesNonzeroSlopesAtVmax) {
 // ------------------------------------------------------------------------------------------
 // Active force-length curves fitted to Thelen2003, where min_norm_active_fiber_length goes to 0.
 
-// Slots 8-31 of jinsimul's Millard fit to Lumbar_C_210's Thelen curves
-// (data/muscle_fit/millard_thelen_lumbar210.json, block), with minimum_value (0.0074),
-// concentric_slope_at_vmax (0.234) and eccentric_slope_at_vmax (0.126) replaced by the 0 that
-// OpenSim's damped model forces and slots 12, 25 and 28 therefore require. `afl` is slots 8-11.
+// Slots 8-31 of jinsimul's Millard fit to Lumbar_C_210's Thelen curves, with minimum_value
+// (0.0074), concentric_slope_at_vmax (0.234) and eccentric_slope_at_vmax (0.126) replaced by the
+// 0 that OpenSim's damped model forces and slots 12, 25 and 28 therefore require. `afl` is slots
+// 8-11.
 std::string ThelenFitShape(const char* afl) {
   return std::string(afl) +
          " 0 0 "
