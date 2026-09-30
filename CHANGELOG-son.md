@@ -3,6 +3,164 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## v3.3.3+son5.0
+
+### Added: MJX runs `compliant_mtu`, `millard_mtu` and `hyfydy_mtu`
+
+`mjx.put_model` refused all three. They now run under MJX's JAX backend with the C equations,
+solvers and iteration caps, in `mjx/mujoco/mjx/_src/muscle_mtu.py`, which follows
+`engine_muscle_mtu.c` and the `compliant_mtu` part of `engine_util_misc.c` function by function.
+`doc/muscle_mtu.rst` has a new MJX section.
+
+- `GainType` gains `COMPLIANT_MTU`, `MILLARD_MTU` and `HYFYDY_MTU`, and `Option` gains `cmtu_iter`.
+- `fwd_actuation` writes the fiber velocity `(l_ce* - l_ce)/dt` into the first activation slot and
+  sets the force to `-F_mtu`; the activation dynamics drive the last slot, `actearly` included.
+- `implicitfast` adds the rigid-tendon `d(force)/d(velocity)`, as `mjd_actuator_vel` does.
+- `mjx.mtu_muscle_equilibrate` and `mjx.compliant_muscle_equilibrate` mirror the C functions, with
+  the iteration caps as arguments.
+- The Millard tables, which the engine keeps in a process-wide cache that `mjData.muscle_curve`
+  points into, are copied onto the device by `put_model`, one row per distinct curve. The curve
+  shape slots are therefore frozen at `put_model`, as C freezes them at `mj_resetData`; the
+  mechanical slots are read every step. `put_model` checks the tables it read against
+  `mju_millardCurve`, since `mjCurveTable` is not public.
+- `make_data` seeds the fiber at `optimal_fiber_length`, as `mj_resetData` does; before, it would
+  have left a zero fiber length. The muscle outputs travel through `put_data`/`get_data` in
+  `Data._impl`.
+- Loops run their C cap every time, with converged elements frozen, and branches are evaluated
+  everywhere with each fed an input it is defined at, so reverse-mode gradients are finite.
+  Gradients are the implicit-function derivative of the root the solver returns, not the
+  derivative of its iterations, which is zero wherever the warm start already met the tolerance.
+
+Three generic MJX paths assumed one activation variable per actuator, which no upstream actuator
+MJX supports ever broke: the `act_dot` scan, `_next_activation` and the `implicitfast` derivative.
+They now index each actuator's last variable. The rewritten `_next_activation` spells
+`jp.clip(..., min=...)`, since jax 0.10 no longer accepts `a_min`; the two other `a_min` calls in
+MJX, in `collision_driver.py` and `passive.py`, are untouched, so MJX still needs a jax that
+accepts it (0.7.2 does, with a deprecation warning).
+
+### Fixed (MJX): `muscle_dynamics` had NaN gradients at the default smoothing width
+
+`support.muscle_dynamics_timescale` evaluated `dctrl / smoothing_width` on every element and
+selected the hard switch with `jp.where` when the width is 0, the default. The unselected division
+has an infinite derivative, so the reverse-mode gradient of any `dyntype="muscle"` actuator with
+respect to `act` or `ctrl` was NaN. The smooth branch now sees a width of 1 wherever the hard
+switch is selected. Values are unchanged.
+
+### Fixed: `mjOption.cmtu_iter` is reachable from Python
+
+It was missing from `MJOPTION_INTS` in `mjxmacro.h`, so `MjModel.opt` did not bind it (see "Found,
+not fixed" under `son4.0a7`). MJX needs it for the Millard/Hyfydy iteration cap. `cmtu_integrator`
+stays unbound: it is an enum the engine never reads. `doc/muscle_mtu.rst` gave the default as 12;
+it is 20, and 12 is what zero or less means.
+
+### Added (MJX): the constraint solve in double precision, `put_model(solver_dtype=jnp.float64)`
+
+With `jax_enable_x64` off and the model and data in float32, `solver.solve` alone runs in float64:
+it enables x64 locally, casts its inputs up and its outputs back, so nothing outside it can become
+float64 and code around MJX keeps its dtypes. A `custom_vjp` runs the backward pass under the same
+local x64, so the widened solve differentiates exactly where the plain one does, which is in reverse
+mode with `opt.iterations = 1`; it does not support forward mode.
+
+This is what single-precision MJX needs on these musculoskeletal models: a float32 rollout
+diverges, and doing only the constraint solve in float64 keeps it with an all-float64 one (see
+Precision). The first attempt, x64 on globally with float32 data, leaked float64 into about a
+quarter of MJX's other operations, because MJX allocates without a dtype and numpy constants are
+float64; enabling x64 only inside the solve avoids that by construction.
+
+### Fixed (MJX): an elliptic cone with no cone rows
+
+The elliptic-cone bookkeeping in the constraint update and the line search built index arrays
+with `jp.array` of Python lists, and an empty list makes a float array, which cannot index. A model
+with `cone="elliptic"`, constraints and no contact of `condim` > 1 failed to trace (myolegs, with
+its contacts removed). The arrays are now `dtype=int`. The same code's fixed six-wide slices still
+need at least three constraint rows; that is upstream's and unchanged.
+
+### Added: what musclemimic calls in mujoco 3.4 and MJX 3.4
+
+musclemimic's MJX environments (JAX backend) run on this build: `MjxMyoFullBody` and the imitation
+environment built from `fullbody/conf_fullbody.yaml` with `mjx_backend: jax` reset and step. Three
+things stood in the way, none needing a rebase onto 3.4:
+
+- MJX 3.4 renamed `backend_impl` to `impl` and gave `make_data`/`put_data` Warp-only `nconmax`,
+  `naconmax` and `njmax`. `put_model`, `put_data` and `make_data` accept both spellings, refuse
+  them disagreeing, and accept and ignore the Warp-only budgets as 3.4 does off Warp.
+- mujoco 3.4 deletes spec elements with `spec.delete(element)`; this build deletes most elements
+  with `element.delete()` and bodies and defaults with `spec.detach_body`/`spec.detach_default`.
+  `MjSpec.delete` now dispatches to those. On the test model a body and a sensor deleted this way
+  compile to the same counts as in 3.4.0.
+- MJX 3.3.3 raised on tendon armature and tendon bias with a sparse mass matrix, which MyoFullBody
+  (nv = 88) gets by default. Both are backported from MJX 3.4: the armature's dense `J^T A J`
+  scattered into the sparse `qM` in its own order, and the bias, which is dense anyway.
+
+Warp is not covered: musclemimic's shipped training configs set `mjx_backend: warp`, and this build
+has no Warp backend, and the muscle-tendon gains exist only in C and in MJX's JAX backend.
+`musclemimic-models` requires `mujoco>=3.4.0`, so an unconstrained install replaces this wheel with
+PyPI's; pin it (for uv, `override-dependencies`).
+
+### Changed: versions, pins and the release
+
+- mujoco and mujoco-mjx are both `3.3.3+son5.0`. mujoco-mjx requires `mujoco==3.3.3+son5.0`, which
+  has the bindings it reads, and `jax==0.7.2`/`jaxlib==0.7.2`, what musclemimic pins and what it is
+  tested on. The remaining `jp.clip(a_min=...)` calls in MJX (`collision_driver.py`, `passive.py`)
+  are `min=` now, so 0.7.2 no longer warns.
+- The release workflow builds the pure-Python mjx wheel and attaches it, and refuses a tag that
+  does not match `mjx/pyproject.toml` as it already refused one that does not match
+  `python/pyproject.toml`.
+
+### Precision
+
+Measured on mujoco-compliant-muscles' three self-contained models, myoleg22, myoleg26 and myolegs, in
+each gain, started as that repo starts them (`sim/reset.py`: the keyframe, its `mjEQ_JOINT`
+dependents derived, the fibres equilibrated), with gravity off, and with sensors and contacts
+removed because MJX 3.3.3 cannot run them. The rollouts are 2000 steps of the repo's leg scenario.
+
+- **The muscles are accurate in float32.** At the scenario's states MJX's float32 forward pass gives
+  the engine's muscle force to within 1e-4 `F_max` (asserted by `tests/test_mjx.py` there). The
+  `compliant_mtu` fp32 failure recorded in `mjwarp-muscle` (training note, 2026-05-04) does not
+  reproduce; that port predates the solver as it is now.
+- **One float32 forward pass is accurate too**: at the starting state and 100 steps in, `qacc_smooth`,
+  the constraint force and `qacc` all agree with float64 to 1e-4 relative, on every model.
+- **A float32 rollout is not.** On myoleg22 and myoleg26 it went to NaN within 1000 steps for all
+  three gains, and at step 100 its force was already 0.13 to 11 `F_max` off an all-float64 run. On
+  myolegs it stayed finite but 1e-2 to 7e-2 `F_max` off. It is not the muscle-tendon gains: myoLeg26
+  with upstream `muscle` actuators is 2.7 off in `qpos` at step 100.
+- **With `solver_dtype=float64` all nine stay finite for 2000 steps** and within 2.8e-5 `F_max` and
+  6.2e-5 in `qpos` of all-float64 at step 100. Past that the gap grows as the dynamics diverge; MJX
+  in float64 and the C engine part by as much themselves.
+- Why a per-step difference of 1e-4 grows in float32 and not with the solve in float64 is not
+  established. It is not the iteration cap: the solve takes one or two iterations in every
+  precision. These models couple light via-point bodies to the joints through joint equalities,
+  and their mass matrix has condition number 4.4e5 (myoleg22/26) against 8e2 (myolegs).
+
+MJX in float64 and the C engine agree to 1e-14 on myolegs and part by 1e-2 in `qpos` within 100
+steps on myoleg22 and myoleg26, in the constraint solve; upstream MJX 3.4.0 differs from C the same
+way on MyoFullBody, so that is MJX's and not the muscles'.
+
+### Verification
+
+- `mjx/mujoco/mjx/_src/muscle_mtu_test.py`, 64 tests, in double precision against the C engine:
+  `fwd_actuation` on eleven muscle variants (pennated, unpennated, overridden shapes, declared and
+  ratio-rigid tendons, a zero-length rigid tendon, Song's own parallel element) to 1e-9; 600 steps
+  of a model mixing all three gains with filter, filterexact and `actearly` actuators, under Euler,
+  RK4 and implicitfast, to 1e-7; equilibration over slack, clamped and stretched poses at three
+  activations to 1e-9; the tables against `mju_millardCurve` to 1e-12; gradients against finite
+  differences of the exact root to 1e-6 (1e-5 for Song, whose step stops 1e-9 m from its root).
+- `solver_precision_test.py`, 6 tests: the widened solve is the float64 solve of the same float32
+  inputs, nothing outside the solve is float64, gradients with one iteration, vmap, refusals.
+- Regression tests for the elliptic cone with no cone rows (`solver_test.py`), the sparse tendon
+  armature and bias against C on a branching tree (`smooth_test.py`), the 3.4 signatures
+  (`io_test.py`) and `MjSpec.delete` (`python/mujoco/specs_test.py`).
+- The whole MJX suite, 413 tests, passes, as do the Python binding tests (146).
+- mujoco-compliant-muscles `tests/test_mjx.py`, 35 tests, on myoleg22, myoleg26 and myolegs in all
+  three gains: MJX on the engine's states along the leg scenario (path length to 1e-10, force and
+  fibre to 1e-9), equilibration from the starting pose (1e-9), the float32 muscles (1e-4 `F_max`),
+  200-step rollouts with the solve in float64 against all-float64 (1e-3), and the float32
+  divergence pinned so that its disappearance is noticed. That repo's own 124 tests pass on this
+  build too.
+- musclemimic's imitation environment (`fullbody/conf_fullbody.yaml`, `mjx_backend: jax`, two
+  environments, a synthetic trajectory in place of the gated datasets) resets and runs ten
+  vectorized steps on this build with no patches, observations finite.
+
 ## v3.3.3+son4.0a10 — alpha
 
 Supersedes `son4.0a9`, which is left as an unpublished draft: its Linux and Windows wheels still

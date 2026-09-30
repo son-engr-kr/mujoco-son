@@ -530,7 +530,7 @@ Solver and edge cases
 
 The fiber Newton is warm-started from the previous step's ``l_ce``, uses an **analytic** Jacobian,
 and stops on the residual, so a muscle in a smooth regime converges in one to three iterations. The
-iteration cap is ``option/cmtu_iter`` (default 12).
+iteration cap is ``option/cmtu_iter`` (default 20; zero or less means 12).
 
 **Fiber length clamp.** ``l_ce`` is clamped from below at
 ``max(min_norm_active_fiber_length * l_opt, h/sin(phi_max))``, ``phi_max = acos(0.1)``. Below the
@@ -593,3 +593,76 @@ muscle usable under finite-difference derivatives. The Hyfydy force is only C0 w
 leaves the active curve's support: its active force-length curve is published as a polynomial with
 a hard cut, "0 for l <= r1", and the polynomial reaches zero at ``r1`` with slope 4.19 rather than
 0. That slope discontinuity is Hyfydy's, and reproducing it is the point of shipping the model.
+
+.. _mtuMJX:
+
+MJX
+---
+
+All three gains run under MJX's JAX backend, with the same equations, the same solvers and the
+same iteration caps as the C engine, so a double-precision MJX step matches ``mj_step`` to
+roundoff. Every MJX integrator works: ``Euler``, ``RK4`` and ``implicitfast``, which picks up the
+rigid-tendon ``d(force)/d(velocity)`` as ``mjd_actuator_vel`` does. The muscle-tendon code is
+``mjx/mujoco/mjx/_src/muscle_mtu.py``, which follows the C function by function.
+
+**Parameters.** The mechanical slots 0..7 of ``actuator_gainprm`` are read every step from the
+``mjx.Model``, so they can be randomized per environment. The Millard curve shapes, slots 8..31,
+are baked by the engine at ``mj_resetData`` into a process-wide cache that ``mjData`` points into;
+``mjx.put_model`` makes an ``mjData`` and copies those tables onto the device, one row per distinct
+curve. They are therefore frozen at ``put_model``, as C freezes them at ``mj_resetData``: to change
+a shape, change the ``mjModel`` and put it again. The tables are derived at run time and never
+stored in the model file. ``put_model`` refuses a non-positive ``max_contraction_velocity``, the
+one case where C switches the stepping solve to the isometric one.
+
+**State.** ``mjx.make_data`` seeds the fiber at ``optimal_fiber_length`` as ``mj_resetData`` does.
+The four muscle outputs live in ``Data._impl`` (``muscle_l_ce``, ``muscle_l_se``, ``muscle_v_ce``,
+``muscle_F_mtu``) and travel through ``put_data`` and ``get_data``. To start from the pose's
+equilibrium:
+
+.. code-block:: python
+
+   dx = mjx.forward(mx, dx)                    # fills actuator_length
+   dx = mjx.mtu_muscle_equilibrate(mx, dx)     # millard_mtu, hyfydy_mtu
+   dx = mjx.compliant_muscle_equilibrate(mx, dx)
+   dx = mjx.forward(mx, dx)
+
+**Fixed trip counts.** XLA needs a loop's length before it runs, so each solver runs its C cap
+every time, with converged elements frozen on the value the C loop breaks with: the stepping
+Newton ``cmtu_iter`` iterations (50 for ``compliant_mtu``), the equilibration 64 bracket steps and
+100 refinements (200 for ``compliant_mtu``). A typical muscle needs a handful of each. The
+equilibration functions take the caps as arguments, which matters when they run every step inside
+a vmapped auto-reset, where both branches of a reset execute; lower caps give up the guarantee of
+matching C.
+
+**Gradients.** The solvers run on ``stop_gradient``-ed inputs, and the implicit function theorem
+is applied at the root they return: ``dl_ce/dtheta = -(dR/dtheta)/(dR/dl_ce)``. That is the
+derivative of the backward-Euler root itself, costs one residual evaluation, and stores nothing
+per iteration. Differentiating the iterations instead would give the derivative of the algorithm,
+which is zero wherever the warm start already met the tolerance and no iteration ran. Two
+consequences are worth knowing. Where a step leaves the fiber where it was, ``v_ce`` is exactly 0,
+and there Hyfydy's force-velocity slope jumps by 0.9% and Song's by a factor of 2.4, so the force
+is not differentiable at that point; the gradient uses the lengthening side, as the C Jacobian
+does. And ``compliant_mtu``'s stepping Newton is damped by 0.8 and stops at a residual of 1e-5, so
+finite differences of the simulated trajectory, which see the algorithm, differ from the gradient,
+which sees the root, by about 1e-4 relative; for the undamped Millard/Hyfydy Newton the two agree
+to 1e-6.
+
+**Precision.** The muscles are accurate in single precision: on mujoco-compliant-muscles'
+converted models MJX's float32 forward pass gives the engine's muscle force to within 1e-4
+``F_max``. The one precision-dependent constant, the rigid tendon's buckling margin, is SimTK's
+``SignificantReal`` at the simulated precision (8.7e-7 in single, the C value 2.0e-14 in double).
+
+A whole single-precision rollout of those models is another matter, for a reason the muscles do
+not cause. Each float32 step agrees with float64 to about 1e-4, yet on myoleg22 and myoleg26 the
+rollout goes to NaN within 1000 steps in every gain, and with upstream ``muscle`` actuators it is
+far off too. Doing only the constraint solve in float64 prevents it:
+
+.. code-block:: python
+
+   mx = mjx.put_model(m, solver_dtype=jnp.float64)   # jax_enable_x64 stays off
+   dx = mjx.make_data(m)                              # float32
+
+The solve enables x64 locally and casts its inputs up and its outputs back, so nothing outside it
+becomes float64. On those models it kept every rollout finite for 2000 steps and within 3e-5
+``F_max`` of an all-float64 run after 100 steps. Why the float32 error grows is not established;
+the solve takes one or two iterations in either precision, so it is not the iteration cap.
