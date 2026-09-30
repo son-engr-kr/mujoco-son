@@ -8,6 +8,7 @@
 # Outputs:
 #   - One Python sdist (built once on Linux)
 #   - Four cp311 wheels (linux/mac arm64/mac x86_64/windows)
+#   - One pure-Python mujoco-mjx wheel (son's MJX, with the muscle-tendon gains)
 #   - Four executable bundles (simulate + libraries + models)
 #   - A draft GitHub Release with all of the above attached
 #
@@ -270,9 +271,31 @@ jobs:
           mujoco-son-*.tar.gz
           mujoco-son-*.zip
 
+  # son's MJX, with the muscle-tendon gains. Pure Python, so one wheel serves every platform.
+  mjx:
+    name: mjx wheel
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Build the mjx wheel
+      run: |
+        python -m pip install --upgrade pip build
+        python -m build --wheel --outdir mjx/dist mjx
+
+    - name: Upload mjx wheel artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: wheel-mjx
+        path: mjx/dist/*.whl
+
   release:
     name: Create GitHub release
-    needs: build
+    needs: [build, mjx]
     runs-on: ubuntu-latest
     # Run as long as the build job has finished (even if some matrix entries
     # failed), so e.g. a billing-blocked or transiently failing platform does
@@ -303,6 +326,12 @@ jobs:
         echo "tag: ${tag_version}   pyproject: ${pkg_version}"
         if [ "${tag_version}" != "${pkg_version}" ]; then
           echo "::error::tag ${GITHUB_REF_NAME} does not match python/pyproject.toml version ${pkg_version}"
+          exit 1
+        fi
+        mjx_version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' src/mjx/pyproject.toml)"
+        echo "mjx: ${mjx_version}"
+        if [ "${tag_version}" != "${mjx_version}" ]; then
+          echo "::error::tag ${GITHUB_REF_NAME} does not match mjx/pyproject.toml version ${mjx_version}"
           exit 1
         fi
 
