@@ -308,7 +308,10 @@ def _update_constraint(m: Model, d: Data, ctx: Context) -> Context:
     for i, (condim, addr) in enumerate(zip(dim, efc_address)):
       adr_i.extend(range(addr, addr + condim))
       adr_j.extend([i] * condim)
-    active = active.at[jp.array(adr_i)].set(bottom_zone[jp.array(adr_j)])
+    # an empty list would make a float array, which cannot index: a model
+    # whose contacts are all condim 1, or that has none, has no cone rows
+    adr_i, adr_j = jp.array(adr_i, dtype=int), jp.array(adr_j, dtype=int)
+    active = active.at[adr_i].set(bottom_zone[adr_j])
     efc_force = d._impl.efc_D * -ctx.Jaref * active + floss_force
     cost = 0.5 * jp.sum(d._impl.efc_D * ctx.Jaref * ctx.Jaref * active)
 
@@ -329,7 +332,8 @@ def _update_constraint(m: Model, d: Data, ctx: Context) -> Context:
       efc_adr.extend(range(addr + 1, addr + condim))
       adr_i.extend([i] * (condim - 1))
       adr_j.extend(range(condim - 1))
-    efc_adr, adr_i, adr_j = jp.array(efc_adr), jp.array(adr_i), jp.array(adr_j)
+    efc_adr = jp.array(efc_adr, dtype=int)
+    adr_i, adr_j = jp.array(adr_i, dtype=int), jp.array(adr_j, dtype=int)
     efc_force = efc_force.at[efc_adr].add(force_fri[(adr_i, adr_j)])
 
     # cone hessian
@@ -456,7 +460,8 @@ def _linesearch(m: Model, d: Data, ctx: Context) -> Context:
     ):
       efc_con.extend([addr] * (condim - 1))
       efc_fri.extend(range(addr + 1, addr + condim))
-    quad = quad.at[jp.array(efc_con)].add(quad[jp.array(efc_fri)])
+    efc_con, efc_fri = jp.array(efc_con, dtype=int), jp.array(efc_fri, dtype=int)
+    quad = quad.at[efc_con].add(quad[efc_fri])
 
     # rescale to make primal cone circular
     # to prevent out of range append zeros to jv

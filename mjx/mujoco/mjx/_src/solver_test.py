@@ -165,6 +165,33 @@ class SolverTest(parameterized.TestCase):
     m.opt.cone = cone
     solver.solve(mjx.put_model(m), mjx.put_data(m, mujoco.MjData(m)))
 
+  def test_elliptic_cone_without_contacts(self):
+    """An elliptic cone with constraints but no cone rows.
+
+    The cone bookkeeping built its index arrays from Python lists, and an empty
+    list makes a float array, which cannot index. Three limit rows, since the
+    cone's fixed six-wide slices also need nefc >= 3.
+    """
+    m = mujoco.MjModel.from_xml_string("""
+       <mujoco>
+          <option cone="elliptic"/>
+          <worldbody>
+            <body>
+              <joint type="hinge" axis="1 0 0" range="-0.1 0.1" limited="true"/>
+              <joint type="hinge" axis="0 1 0" range="-0.1 0.1" limited="true"/>
+              <joint type="hinge" axis="0 0 1" range="-0.1 0.1" limited="true"/>
+              <geom size="0.1" pos="0 0.1 -0.2" contype="0" conaffinity="0"/>
+            </body>
+          </worldbody>
+          <keyframe><key qpos="0.2 -0.2 0.2"/></keyframe>
+        </mujoco>
+    """)
+    d = mujoco.MjData(m)
+    mujoco.mj_resetDataKeyframe(m, d, 0)
+    mujoco.mj_forward(m, d)
+    dx = jax.jit(mjx.forward)(mjx.put_model(m), mjx.put_data(m, d))
+    np.testing.assert_allclose(dx.qacc, d.qacc, rtol=1e-4, atol=1e-4)
+
 
 if __name__ == '__main__':
   absltest.main()
