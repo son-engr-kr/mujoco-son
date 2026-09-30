@@ -109,18 +109,17 @@ PyPI's; pin it (for uv, `override-dependencies`).
 
 ### Precision
 
-Measured on mujoco-compliant-muscles' three self-contained models, myoleg22, myoleg26 and myolegs, in
-each gain, started as that repo starts them (`sim/reset.py`: the keyframe, its `mjEQ_JOINT`
-dependents derived, the fibres equilibrated), with gravity off, and with sensors and contacts
-removed because MJX 3.3.3 cannot run them. The rollouts are 2000 steps of the repo's leg scenario.
+Measured on three leg models converted from OpenSim to each gain, MyoAssist's myoLeg22 and myoLeg26
+and myo_sim's myolegs, started from their keyframes with the `mjEQ_JOINT` dependent coordinates
+derived from their polynomials and the fibres equilibrated, with gravity off, and with sensors and
+contacts removed because MJX 3.3.3 cannot run them. The rollouts are 2000 steps driving one muscle
+group at a time.
 
-- **The muscles are accurate in float32.** At the scenario's states MJX's float32 forward pass gives
-  the engine's muscle force to within 1e-4 `F_max` (asserted by `tests/test_mjx.py` there). The
-  `compliant_mtu` fp32 failure recorded in `mjwarp-muscle` (training note, 2026-05-04) does not
-  reproduce; that port predates the solver as it is now.
+- **The muscles are accurate in float32.** At the rollouts' states MJX's float32 forward pass gives
+  the engine's muscle force to within 1e-4 `F_max`.
 - **One float32 forward pass is accurate too**: at the starting state and 100 steps in, `qacc_smooth`,
   the constraint force and `qacc` all agree with float64 to 1e-4 relative, on every model.
-- **A float32 rollout is not.** On myoleg22 and myoleg26 it went to NaN within 1000 steps for all
+- **A float32 rollout is not.** On myoLeg22 and myoLeg26 it went to NaN within 1000 steps for all
   three gains, and at step 100 its force was already 0.13 to 11 `F_max` off an all-float64 run. On
   myolegs it stayed finite but 1e-2 to 7e-2 `F_max` off. It is not the muscle-tendon gains: myoLeg26
   with upstream `muscle` actuators is 2.7 off in `qpos` at step 100.
@@ -130,10 +129,10 @@ removed because MJX 3.3.3 cannot run them. The rollouts are 2000 steps of the re
 - Why a per-step difference of 1e-4 grows in float32 and not with the solve in float64 is not
   established. It is not the iteration cap: the solve takes one or two iterations in every
   precision. These models couple light via-point bodies to the joints through joint equalities,
-  and their mass matrix has condition number 4.4e5 (myoleg22/26) against 8e2 (myolegs).
+  and their mass matrix has condition number 4.4e5 (myoLeg22/26) against 8e2 (myolegs).
 
 MJX in float64 and the C engine agree to 1e-14 on myolegs and part by 1e-2 in `qpos` within 100
-steps on myoleg22 and myoleg26, in the constraint solve; upstream MJX 3.4.0 differs from C the same
+steps on myoLeg22 and myoLeg26, in the constraint solve; upstream MJX 3.4.0 differs from C the same
 way on MyoFullBody, so that is MJX's and not the muscles'.
 
 ### Verification
@@ -151,12 +150,10 @@ way on MyoFullBody, so that is MJX's and not the muscles'.
   armature and bias against C on a branching tree (`smooth_test.py`), the 3.4 signatures
   (`io_test.py`) and `MjSpec.delete` (`python/mujoco/specs_test.py`).
 - The whole MJX suite, 413 tests, passes, as do the Python binding tests (146).
-- mujoco-compliant-muscles `tests/test_mjx.py`, 35 tests, on myoleg22, myoleg26 and myolegs in all
-  three gains: MJX on the engine's states along the leg scenario (path length to 1e-10, force and
-  fibre to 1e-9), equilibration from the starting pose (1e-9), the float32 muscles (1e-4 `F_max`),
-  200-step rollouts with the solve in float64 against all-float64 (1e-3), and the float32
-  divergence pinned so that its disappearance is noticed. That repo's own 124 tests pass on this
-  build too.
+- On the three converted leg models in all three gains: MJX on the engine's states along a
+  rollout (path length to 1e-10, force and fibre to 1e-9), equilibration from the starting pose
+  (1e-9), the float32 muscles (1e-4 `F_max`), 200-step rollouts with the solve in float64 against
+  all-float64 (1e-3), and the float32 divergence pinned so that its disappearance is noticed.
 - musclemimic's imitation environment (`fullbody/conf_fullbody.yaml`, `mjx_backend: jax`, two
   environments, a synthetic trajectory in place of the gated datasets) resets and runs ten
   vectorized steps on this build with no patches, observations finite.
@@ -335,7 +332,7 @@ With fiber damping, OpenSim's `Millard2012EquilibriumMuscle` sets `concentric_sl
 `eccentric_slope_at_vmax` to 0 whatever the file declares, and only logs it
 (`Millard2012EquilibriumMuscle.cpp`, the damped-model branch of `buildMuscle`). The engine used them
 as given. A non-zero slot 25 or 28 with damping now fails the load; the undamped model (negative
-`gainprm[5]`) keeps them. None of the 312 fitted muscles in `mujoco-compliant-muscles` sets either.
+`gainprm[5]`) keeps them. None of 312 muscles fitted from OpenSim models sets either.
 jinsimul's Thelen fit (0.234 and 0.126) is the case this catches.
 
 ### Fixed: Python `MjSpec` exposes all 32 `gainprm` slots
@@ -396,9 +393,8 @@ Slots 9-31 used to be ignored, so `a6` runs a model with its own parallel elemen
 error, and runs it wrong. A value in slots 11-31, one of slots 9-10 without the other, or a
 negative or non-finite value there now fails the load, from `mj_resetData` as `millard_mtu` does.
 
-No existing model is affected. All 3,565 `compliant_mtu` declarations across 73 MJCF files in the
-neumove projects, including the MyoAssist compliant models in `mujoco-compliant-muscles`, give
-exactly nine values. The 658 actuators in the files that compile on their own resolve slots 9-31
+No existing model is affected. All 3,565 `compliant_mtu` declarations across 73 MJCF files checked,
+including MyoAssist compliant models, give exactly nine values. The 658 actuators in the files that compile on their own resolve slots 9-31
 to 0 after defaults as well.
 
 ### Fixed: the Millard active force-length curve enforces OpenSim's range checks
@@ -414,8 +410,8 @@ This surfaced while checking jinsimul's Millard fit to `Lumbar_C_210`'s Thelen c
 `min_norm_active_fiber_length` at 3.5e-10 and the transition at 1.4e-9. OpenSim 4.6 refuses that
 shape when the `ActiveForceLengthCurve` is constructed. `a6` refused it too, but by accident, at
 the corner-control-point check, and it accepted nearby shapes OpenSim refuses, such as a
-transition of 3.5e-9. None of the 312 fitted muscles committed in `mujoco-compliant-muscles`
-violates any of the new checks.
+transition of 3.5e-9. None of 312 muscles fitted from OpenSim models violates any of the new
+checks.
 
 ### Measured: `min_norm_active_fiber_length` near zero
 
@@ -432,9 +428,8 @@ A value near zero is not always resolved, though. The baked table's knots are `(
 apart, and an ascending limb only a few knots wide is smoothed over. Measured against OpenSim
 4.6's `ActiveForceLengthCurve`, the worst error in normalized force is 1.2e-8 at the default shape.
 With `min` near zero it is 1.9e-8 for a transition of 0.3, 2.3e-6 for 0.1, and 0.087 for 1e-7,
-in each case at the foot of the curve. For the 113 Thelen-sourced fits in
-`mujoco-compliant-muscles` (`min` 0.05, transitions from 0.0975) the median is 1.5e-7 and the
-worst 7.5e-5. `doc/muscle_mtu.rst` now carries these numbers in place of the unqualified 7e-9.
+in each case at the foot of the curve. For 113 Thelen-sourced fits (`min` 0.05, transitions from
+0.0975) the median is 1.5e-7 and the worst 7.5e-5. `doc/muscle_mtu.rst` now carries these numbers in place of the unqualified 7e-9.
 
 ### Not in this release
 

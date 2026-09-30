@@ -647,13 +647,13 @@ finite differences of the simulated trajectory, which see the algorithm, differ 
 which sees the root, by about 1e-4 relative; for the undamped Millard/Hyfydy Newton the two agree
 to 1e-6.
 
-**Precision.** The muscles are accurate in single precision: on mujoco-compliant-muscles'
-converted models MJX's float32 forward pass gives the engine's muscle force to within 1e-4
-``F_max``. The one precision-dependent constant, the rigid tendon's buckling margin, is SimTK's
+**Precision.** The muscles are accurate in single precision: on leg models converted from OpenSim
+(MyoAssist's myoLeg22 and myoLeg26, myo_sim's myolegs) MJX's float32 forward pass gives the
+engine's muscle force to within 1e-4 ``F_max``. The one precision-dependent constant, the rigid tendon's buckling margin, is SimTK's
 ``SignificantReal`` at the simulated precision (8.7e-7 in single, the C value 2.0e-14 in double).
 
 A whole single-precision rollout of those models is another matter, for a reason the muscles do
-not cause. Each float32 step agrees with float64 to about 1e-4, yet on myoleg22 and myoleg26 the
+not cause. Each float32 step agrees with float64 to about 1e-4, yet on myoLeg22 and myoLeg26 the
 rollout goes to NaN within 1000 steps in every gain, and with upstream ``muscle`` actuators it is
 far off too. Doing only the constraint solve in float64 prevents it:
 

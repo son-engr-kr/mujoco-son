@@ -85,9 +85,9 @@ class SolverPrecisionTest(parameterized.TestCase):
   def test_solves_the_single_precision_inputs_in_double(self, name):
     """The widened solve is the double solve of the same f32 inputs, cast back.
 
-    Whether that is worth it depends on the model's conditioning, which is tested
-    on the musculoskeletal models it is for (mujoco-compliant-muscles); here the
-    plumbing is: which inputs, which precision, which outputs.
+    Whether that is worth it depends on the model's conditioning, and is measured
+    on the musculoskeletal models it is for; here the plumbing is: which inputs,
+    which precision, which outputs.
     """
     if name == 'coupled':
       m = mujoco.MjModel.from_xml_string(_COUPLED)
