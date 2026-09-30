@@ -1128,12 +1128,15 @@ def muscle_dynamics_timescale(
     return sol
 
   # smooth switching
-  # scale by width, center around 0.5 midpoint, rescale to bounds
-  tau_smooth = tau_deact + (tau_act - tau_deact) * _sigmoid(
-      dctrl / smoothing_width + 0.5
-  )
+  # scale by width, center around 0.5 midpoint, rescale to bounds. Where the
+  # hard switch is selected the width is replaced by one the smooth branch is
+  # defined at: dctrl / 0 is not selected, but its infinite derivative would
+  # still make the reverse-mode gradient NaN.
+  hard = smoothing_width < mujoco.mjMINVAL
+  width = jp.where(hard, 1, smoothing_width)
+  tau_smooth = tau_deact + (tau_act - tau_deact) * _sigmoid(dctrl / width + 0.5)
 
-  return jp.where(smoothing_width < mujoco.mjMINVAL, tau_hard, tau_smooth)
+  return jp.where(hard, tau_hard, tau_smooth)
 
 
 def muscle_dynamics(
