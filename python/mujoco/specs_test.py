@@ -847,6 +847,22 @@ class SpecsTest(absltest.TestCase):
     self.assertEqual(model.nsite, 10)
     self.assertEqual(model.nsensor, 9)
 
+  def test_delete_through_the_spec(self):
+    """spec.delete(element), as mujoco 3.4 spells element.delete()."""
+    file_path = epath.resource_path("mujoco") / "testdata" / "model.xml"
+    spec = mujoco.MjSpec.from_file(file_path.as_posix())
+    before = spec.compile()
+
+    spec.delete(spec.sensors[-1])
+    spec.delete(spec.body('tumbling'))
+
+    model = spec.compile()
+    self.assertEqual(model.nsensor, before.nsensor - 1)
+    self.assertLess(model.nbody, before.nbody)
+    self.assertEqual(
+        mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, 'tumbling'), -1
+    )
+
   def test_plugin(self):
     spec = mujoco.MjSpec()
     spec.activate_plugin('mujoco.elasticity.cable')

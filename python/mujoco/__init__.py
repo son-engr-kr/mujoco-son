@@ -193,8 +193,29 @@ def _bind_data(
   else:
     return data.bind_scalar(specs)
 
+def _spec_delete(spec: _specs.MjSpec, element: Any) -> None:
+  """Deletes an element from a spec, as mujoco 3.4 spells it.
+
+  This build deletes most elements through the element itself, element.delete(),
+  and bodies and defaults through the spec, detach_body and detach_default, which
+  delete them and their subtree; code written for 3.4 calls spec.delete(element)
+  for all of them, musclemimic's among it.
+
+  Args:
+    spec: the spec the element belongs to
+    element: the element to delete
+  """
+  if isinstance(element, _specs.MjsBody):
+    spec.detach_body(element)
+  elif isinstance(element, _specs.MjsDefault):
+    spec.detach_default(element)
+  else:
+    element.delete()
+
+
 _specs.MjSpec.from_zip = from_zip
 _specs.MjSpec.to_zip = to_zip
+_specs.MjSpec.delete = _spec_delete
 _structs.MjData.bind = _bind_data
 _structs.MjModel.bind = _bind_model
 

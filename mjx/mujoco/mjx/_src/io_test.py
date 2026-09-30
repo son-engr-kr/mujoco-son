@@ -977,5 +977,27 @@ class ResolveBackendImplAndDeviceTest(parameterized.TestCase):
     self.assertEqual(device.platform, 'cpu')
 
 
+class Mjx34SignatureTest(absltest.TestCase):
+  """Code written for MJX 3.4 (musclemimic's, for one) calls it as 3.4 spells it."""
+
+  def test_impl_is_backend_impl(self):
+    m = test_util.load_test_file('pendula.xml')
+    d = mujoco.MjData(m)
+    mx = mjx.put_model(m, impl='jax')
+    self.assertEqual(mx.backend_impl, BackendImpl.JAX)
+    dx = mjx.put_data(m, d, impl='jax', nconmax=10, naconmax=10, njmax=10)
+    self.assertEqual(dx.backend_impl, BackendImpl.JAX)
+    dx = mjx.make_data(m, impl='jax', nconmax=10, naconmax=10, njmax=10)
+    self.assertEqual(dx.backend_impl, BackendImpl.JAX)
+    mjx.put_model(m, backend_impl='jax', impl='jax')
+
+  def test_conflicting_impl_is_refused(self):
+    m = test_util.load_test_file('pendula.xml')
+    with self.assertRaisesRegex(ValueError, 'disagree'):
+      mjx.put_model(m, backend_impl='c', impl='jax')
+    with self.assertRaisesRegex(ValueError, 'disagree'):
+      mjx.make_data(m, backend_impl='c', impl='jax')
+
+
 if __name__ == '__main__':
   absltest.main()

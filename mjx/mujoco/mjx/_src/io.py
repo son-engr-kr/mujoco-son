@@ -363,12 +363,22 @@ def _put_model_c(
   return _strip_weak_type(model)
 
 
+def _impl_alias(backend_impl, impl):
+  """MJX 3.4 renamed backend_impl to impl; accept either, as code written for 3.4 passes impl."""
+  if impl is None:
+    return backend_impl
+  if backend_impl is not None and types.BackendImpl(backend_impl) != types.BackendImpl(impl):
+    raise ValueError(f'backend_impl={backend_impl} and impl={impl} disagree')
+  return impl
+
+
 def put_model(
     m: mujoco.MjModel,
     device: Optional[jax.Device] = None,
     backend_impl: Optional[Union[str, types.BackendImpl]] = None,
     _full_compat: bool = False,  # pylint: disable=invalid-name
     *,
+    impl: Optional[Union[str, types.BackendImpl]] = None,
     solver_dtype: Optional[Any] = None,
 ) -> types.Model:
   """Puts mujoco.MjModel onto a device, resulting in mjx.Model.
@@ -379,6 +389,7 @@ def put_model(
     backend_impl: backend implementation to use
     _full_compat: put all MjModel fields onto device irrespective of MJX support
       This is an experimental feature.  Avoid using it for now.
+    impl: MJX 3.4's name for backend_impl
     solver_dtype: ``jnp.float64`` (or ``'float64'``) runs the constraint solve
       in double precision while everything else stays in the data's precision,
       with jax_enable_x64 off; see solver.solve. None, the default, solves in
@@ -391,6 +402,7 @@ def put_model(
     ValueError: if backend_impl or solver_dtype is not supported
     DeprecationWarning: if _full_compat is True
   """
+  backend_impl = _impl_alias(backend_impl, impl)
   if solver_dtype is not None:
     solver_dtype = np.dtype(solver_dtype).name
     if solver_dtype != 'float64':
@@ -722,6 +734,11 @@ def make_data(
     device: Optional[jax.Device] = None,
     backend_impl: Optional[Union[str, types.BackendImpl]] = None,
     _full_compat: bool = False,  # pylint: disable=invalid-name
+    *,
+    impl: Optional[Union[str, types.BackendImpl]] = None,
+    nconmax: Optional[int] = None,
+    naconmax: Optional[int] = None,
+    njmax: Optional[int] = None,
 ) -> types.Data:
   """Allocate and initialize Data.
 
@@ -732,6 +749,10 @@ def make_data(
     _full_compat: put all fields onto device irrespective of MJX support This is
       an experimental feature.  Avoid using it for now. If using this flag, also
       use _full_compat for put_model.
+    impl: MJX 3.4's name for backend_impl
+    nconmax: accepted as MJX 3.4 does; only its Warp backend reads it
+    naconmax: accepted as MJX 3.4 does; only its Warp backend reads it
+    njmax: accepted as MJX 3.4 does; only its Warp backend reads it
 
   Returns:
     an initialized mjx.Data placed on device
@@ -751,6 +772,8 @@ def make_data(
     )
     backend_impl = types.BackendImpl.C
 
+  del nconmax, naconmax, njmax  # Warp only, which this MJX does not have
+  backend_impl = _impl_alias(backend_impl, impl)
   backend_impl, device = _resolve_backend_impl_and_device(backend_impl, device)
 
   if isinstance(m, types.Model) and m.backend_impl != backend_impl:
@@ -1065,6 +1088,11 @@ def put_data(
     device: Optional[jax.Device] = None,
     backend_impl: Optional[Union[str, types.BackendImpl]] = None,
     _full_compat: bool = False,  # pylint: disable=invalid-name
+    *,
+    impl: Optional[Union[str, types.BackendImpl]] = None,
+    nconmax: Optional[int] = None,
+    naconmax: Optional[int] = None,
+    njmax: Optional[int] = None,
 ) -> types.Data:
   """Puts mujoco.MjData onto a device, resulting in mjx.Data.
 
@@ -1076,6 +1104,10 @@ def put_data(
     _full_compat: put all MjModel fields onto device irrespective of MJX support
       This is an experimental feature.  Avoid using it for now. If using this
       flag, also use _full_compat for put_model.
+    impl: MJX 3.4's name for backend_impl
+    nconmax: accepted as MJX 3.4 does; only its Warp backend reads it
+    naconmax: accepted as MJX 3.4 does; only its Warp backend reads it
+    njmax: accepted as MJX 3.4 does; only its Warp backend reads it
 
   Returns:
     an mjx.Data placed on device
@@ -1089,6 +1121,8 @@ def put_data(
     )
     backend_impl = types.BackendImpl.C
 
+  del nconmax, naconmax, njmax  # Warp only, which this MJX does not have
+  backend_impl = _impl_alias(backend_impl, impl)
   backend_impl, device = _resolve_backend_impl_and_device(backend_impl, device)
   if backend_impl == types.BackendImpl.JAX:
     return _put_data_jax(m, d, device)

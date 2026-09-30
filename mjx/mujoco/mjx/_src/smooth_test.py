@@ -369,6 +369,70 @@ class TendonTest(parameterized.TestCase):
     dx = mjx.tendon_bias(mx, dx)
     _assert_eq(dx.qfrc_bias, d.qfrc_bias, 'qfrc_bias')
 
+  def test_tendon_armature_sparse(self):
+    """Tendon armature into a sparse qM, on a branching tree.
+
+    The entries go in qM's own order, each row walking up its dof's parent
+    chain, so the tree branches and the tendons span both branches.
+    """
+    m = mujoco.MjModel.from_xml_string("""
+        <mujoco>
+          <option jacobian="sparse"/>
+          <worldbody>
+            <site name="anchor" pos="0 0 1"/>
+            <body name="root">
+              <joint name="r0" type="hinge" axis="0 1 0"/>
+              <joint name="r1" type="slide" axis="0 0 1"/>
+              <geom size="0.1" mass="1"/>
+              <body name="left" pos="0.3 0 0">
+                <joint type="hinge" axis="1 0 0"/>
+                <geom size="0.05" mass="0.5"/>
+                <body pos="0.2 0 0">
+                  <joint type="hinge" axis="0 1 0"/>
+                  <geom size="0.05" mass="0.2"/>
+                  <site name="l"/>
+                </body>
+              </body>
+              <body name="right" pos="-0.3 0 0">
+                <joint type="hinge" axis="0 0 1"/>
+                <geom size="0.05" mass="0.5"/>
+                <site name="r"/>
+              </body>
+            </body>
+          </worldbody>
+          <tendon>
+            <spatial armature="0.7">
+              <site site="anchor"/><site site="l"/>
+            </spatial>
+            <spatial armature="1.3">
+              <site site="l"/><site site="r"/>
+            </spatial>
+          </tendon>
+          <keyframe>
+            <key qpos="0.3 0.1 -0.4 0.5 0.2" qvel="1 -0.5 2 -1 0.7"/>
+          </keyframe>
+        </mujoco>
+        """)
+    self.assertTrue(mujoco.mj_isSparse(m))
+
+    d = mujoco.MjData(m)
+    mujoco.mj_resetDataKeyframe(m, d, 0)
+    mujoco.mj_forward(m, d)
+
+    mx = mjx.put_model(m)
+    dx = mjx.put_data(m, d)
+    dx = dx.tree_replace(
+        {'_impl.qM': jp.zeros(m.nM), 'qfrc_bias': jp.zeros(m.nv)}
+    )
+
+    dx = mjx.crb(mx, dx)
+    dx = mjx.tendon_armature(mx, dx)
+    _assert_eq(dx._impl.qM, d.qM, 'qM')
+
+    dx = mjx.rne(mx, dx)
+    dx = mjx.tendon_bias(mx, dx)
+    _assert_eq(dx.qfrc_bias, d.qfrc_bias, 'qfrc_bias')
+
 
 if __name__ == '__main__':
   absltest.main()
