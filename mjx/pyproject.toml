@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name="mujoco-mjx"
-version = "3.3.3"
+version = "3.3.3+son5.0"
 authors = [
     {name = "Google DeepMind", email = "mujoco@deepmind.com"},
 ]
-description = "MuJoCo XLA (MJX)"
+description = "MuJoCo XLA (MJX), mujoco-son build with the muscle-tendon gains"
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {text = "Apache License 2.0"}
 classifiers = [
@@ -28,9 +28,12 @@ requires-python = ">=3.9"
 dependencies = [
     "absl-py",
     "etils[epath]",
-    "jax",
-    "jaxlib",
-    "mujoco>=3.3.3.dev0",
+    # the jax musclemimic pins, and the one this MJX is tested on
+    "jax==0.7.2",
+    "jaxlib==0.7.2",
+    # the muscle-tendon gains, their Python bindings and mjOption.cmtu_iter come from the
+    # mujoco-son build of the same version; PyPI's mujoco has none of them
+    "mujoco==3.3.3+son5.0",
     "scipy",
     "trimesh",
 ]

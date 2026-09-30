@@ -13,10 +13,11 @@
 
 ## Install (mujoco-son)
 
-> **`son4.0a10` is an alpha.** The muscle models are verified against OpenSim's own
-> curves and covered by unit tests, but they have not yet been run in a real
-> workload, and this release carries breaking changes that no downstream code has
-> exercised yet. See [CHANGELOG-son.md](CHANGELOG-son.md) before upgrading.
+> **`son5.0` adds MJX.** The muscle models are verified against OpenSim's own
+> curves and covered by unit tests, and son's MJX runs them as the C engine does,
+> checked on the converted models of
+> [mujoco-compliant-muscles](https://github.com/son-engr-kr/mujoco-compliant-muscles).
+> See [CHANGELOG-son.md](CHANGELOG-son.md) before upgrading.
 
 Prebuilt wheels (CPython 3.11 only) and `simulate` executables for each
 platform are published on the
@@ -26,13 +27,21 @@ needs to be bumped between releases.
 
 ```bash
 # Linux x86_64 (glibc >= 2.35 — Ubuntu 22.04+, Debian 12+, recent Fedora/RHEL)
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0a10/mujoco-3.3.3+son4.0a10-cp311-cp311-linux_x86_64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.0/mujoco-3.3.3+son5.0-cp311-cp311-linux_x86_64.whl
 
 # macOS Apple Silicon (M1/M2/M3/M4, macOS 11+)
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0a10/mujoco-3.3.3+son4.0a10-cp311-cp311-macosx_11_0_arm64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.0/mujoco-3.3.3+son5.0-cp311-cp311-macosx_11_0_arm64.whl
 
 # Windows x86_64
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son4.0a10/mujoco-3.3.3+son4.0a10-cp311-cp311-win_amd64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.0/mujoco-3.3.3+son5.0-cp311-cp311-win_amd64.whl
+```
+
+son's MJX, which runs the three muscle-tendon gains under JAX, is a separate
+pure-Python wheel on the same page. It needs the mujoco wheel of the same version
+and `jax==0.7.2`:
+
+```bash
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.0/mujoco_mjx-3.3.3+son5.0-py3-none-any.whl
 ```
 
 For Python versions other than 3.11, build from the sdist
