@@ -15,8 +15,7 @@
 
 > **`son5.0` adds MJX.** The muscle models are verified against OpenSim's own
 > curves and covered by unit tests, and son's MJX runs them as the C engine does,
-> checked on the converted models of
-> [mujoco-compliant-muscles](https://github.com/son-engr-kr/mujoco-compliant-muscles).
+> checked on the converted models of `mujoco-compliant-muscles`.
 > See [CHANGELOG-son.md](CHANGELOG-son.md) before upgrading.
 
 Prebuilt wheels (CPython 3.11 only) and `simulate` executables for each
