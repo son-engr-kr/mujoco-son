@@ -24,6 +24,7 @@ from mujoco.mjx._src import collision_driver
 from mujoco.mjx._src import constraint
 from mujoco.mjx._src import derivative
 from mujoco.mjx._src import math
+from mujoco.mjx._src import muscle_mtu
 from mujoco.mjx._src import passive
 from mujoco.mjx._src import scan
 from mujoco.mjx._src import sensor
@@ -130,28 +131,37 @@ def fwd_actuation(m: Model, d: Data) -> Data:
       raise NotImplementedError(f'dyntype {dyn_typ.name} not implemented.')
     return act_dot
 
-  act_dot = jp.zeros((m.na,))
+  # the dynamics drive the LAST activation variable of each actuator; earlier
+  # ones are internal state, which is what a muscle-tendon unit's fiber is
+  act_dot = jp.zeros((m.na,), dtype=d.act.dtype)
+  ctrl_act = ctrl
   if m.na:
-    act_dot = scan.flat(
+    (stateful,) = np.nonzero(m.actuator_actadr >= 0)
+    act_last = m.actuator_actadr + m.actuator_actnum - 1
+    act_last_dim = d.act[np.where(m.actuator_actadr >= 0, act_last, 0)]
+    act_dot_u = scan.flat(
         m,
         get_act_dot,
-        'uuua',
-        'a',
+        'uuuu',
+        'u',
         m.actuator_dyntype,
         m.actuator_dynprm,
         ctrl,
-        d.act,
+        act_last_dim,
         group_by='u',
     )
-
-  ctrl_act = ctrl
-  if m.na:
-    act_last_dim = d.act[m.actuator_actadr + m.actuator_actnum - 1]
+    act_dot = act_dot.at[act_last[stateful]].set(act_dot_u[stateful])
     ctrl_act = jp.where(m.actuator_actadr == -1, ctrl, act_last_dim)
 
-  def get_force(*args):
-    gain_t, gain_p, bias_t, bias_p, len_, vel, ctrl_act, len_range, acc0 = args
+  # muscle-tendon units: the fiber velocity, and the force, which comes out of
+  # the same equilibrium solve
+  f_mtu = jp.zeros((m.nu,), dtype=d.act.dtype)
+  if np.isin(m.actuator_gaintype, muscle_mtu.MTU_GAINS).any():
+    d, act_dot, f_mtu = muscle_mtu.fwd_actuation(m, d, act_dot)
 
+  def get_force(
+      gain_t, gain_p, bias_t, bias_p, len_, vel, ctrl_act, len_range, acc0, f_mtu
+  ):
     typ, prm = GainType(gain_t), gain_p
     if typ == GainType.FIXED:
       gain = prm[0]
@@ -159,8 +169,14 @@ def fwd_actuation(m: Model, d: Data) -> Data:
       gain = prm[0] + prm[1] * len_ + prm[2] * vel
     elif typ == GainType.MUSCLE:
       gain = support.muscle_gain(len_, vel, len_range, acc0, prm)
+    elif typ in muscle_mtu.MTU_GAINS:
+      gain = None
     else:
       raise RuntimeError(f'unrecognized gaintype {typ.name}.')
+
+    # a muscle pulls, i.e. shortens its transmission, so a muscle-tendon unit's
+    # force is its negated tendon force rather than gain * act
+    force = -f_mtu if gain is None else gain * ctrl_act
 
     typ, prm = BiasType(bias_t), bias_p
     bias = jp.array(0.0)
@@ -169,12 +185,12 @@ def fwd_actuation(m: Model, d: Data) -> Data:
     elif typ == BiasType.MUSCLE:
       bias = support.muscle_bias(len_, len_range, acc0, prm)
 
-    return gain * ctrl_act + bias
+    return force + bias
 
   force = scan.flat(
       m,
       get_force,
-      'uuuuuuuuu',
+      'uuuuuuuuuu',
       'u',
       m.actuator_gaintype,
       m.actuator_gainprm,
@@ -185,6 +201,7 @@ def fwd_actuation(m: Model, d: Data) -> Data:
       ctrl_act,
       jp.array(m.actuator_lengthrange),
       jp.array(m.actuator_acc0),
+      f_mtu,
       group_by='u',
   )
 
@@ -289,25 +306,26 @@ def _next_activation(m: Model, d: Data, act_dot: jax.Array) -> jax.Array:
   if not m.na:
     return act
 
+  # the actuator each activation variable belongs to; a muscle-tendon unit owns
+  # two, and every one of them is integrated under its actuator's dyntype
+  act_uid = np.zeros(m.na, dtype=int)
+  for i in np.nonzero(m.actuator_actadr >= 0)[0]:
+    adr = m.actuator_actadr[i]
+    act_uid[adr : adr + m.actuator_actnum[i]] = i
+
+  act_next = act + act_dot * m.opt.timestep
+  filterexact = m.actuator_dyntype[act_uid] == DynType.FILTEREXACT
+  if filterexact.any():
+    tau = jp.clip(m.actuator_dynprm[act_uid, 0], min=mujoco.mjMINVAL)
+    exact = act + act_dot * tau * (1 - jp.exp(-m.opt.timestep / tau))
+    act_next = jp.where(filterexact, exact, act_next)
+
   actrange = jp.where(
-      m.actuator_actlimited[:, None],
-      m.actuator_actrange,
+      m.actuator_actlimited[act_uid, None],
+      m.actuator_actrange[act_uid],
       jp.array([-jp.inf, jp.inf]),
   )
-
-  def fn(dyntype, dynprm, act, act_dot, actrange):
-    if dyntype == DynType.FILTEREXACT:
-      tau = jp.clip(dynprm[0], a_min=mujoco.mjMINVAL)
-      act = act + act_dot * tau * (1 - jp.exp(-m.opt.timestep / tau))
-    else:
-      act = act + act_dot * m.opt.timestep
-    act = jp.clip(act, actrange[0], actrange[1])
-    return act
-
-  args = (m.actuator_dyntype, m.actuator_dynprm, act, act_dot, actrange)
-  act = scan.flat(m, fn, 'uuaau', 'a', *args, group_by='u')
-
-  return act.reshape(m.na)
+  return jp.clip(act_next, actrange[:, 0], actrange[:, 1])
 
 
 @named_scope

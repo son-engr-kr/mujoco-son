@@ -33,6 +33,8 @@ from mujoco.mjx._src.io import get_data_into
 from mujoco.mjx._src.io import make_data
 from mujoco.mjx._src.io import put_data
 from mujoco.mjx._src.io import put_model
+from mujoco.mjx._src.muscle_mtu import compliant_muscle_equilibrate
+from mujoco.mjx._src.muscle_mtu import mtu_muscle_equilibrate
 from mujoco.mjx._src.passive import passive
 from mujoco.mjx._src.ray import ray
 from mujoco.mjx._src.sensor import sensor_acc

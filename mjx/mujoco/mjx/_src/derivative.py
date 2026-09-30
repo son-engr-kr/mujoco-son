@@ -18,6 +18,7 @@ from typing import Optional
 
 import jax
 from jax import numpy as jp
+from mujoco.mjx._src import muscle_mtu
 # pylint: disable=g-importing-member
 from mujoco.mjx._src.types import BiasType
 from mujoco.mjx._src.types import Data
@@ -25,6 +26,8 @@ from mujoco.mjx._src.types import DisableBit
 from mujoco.mjx._src.types import DynType
 from mujoco.mjx._src.types import GainType
 from mujoco.mjx._src.types import Model
+# pylint: enable=g-importing-member
+import numpy as np
 
 
 def deriv_smooth_vel(m: Model, d: Data) -> Optional[jax.Array]:
@@ -38,8 +41,15 @@ def deriv_smooth_vel(m: Model, d: Data) -> Optional[jax.Array]:
     bias_vel = m.actuator_biasprm[:, 2] * affine_bias
     affine_gain = m.actuator_gaintype == GainType.AFFINE
     gain_vel = m.actuator_gainprm[:, 2] * affine_gain
-    ctrl = d.ctrl.at[m.actuator_dyntype != DynType.NONE].set(d.act)
+    # the gain multiplies the LAST activation variable of each actuator
+    (stateful,) = np.nonzero(m.actuator_dyntype != DynType.NONE)
+    act_last = m.actuator_actadr + m.actuator_actnum - 1
+    ctrl = d.ctrl.at[stateful].set(d.act[act_last[stateful]])
     vel = bias_vel + gain_vel * ctrl
+    # muscle-tendon units do not follow force = gain*act; their d/dvelocity is
+    # nonzero only on the rigid-tendon path
+    if np.isin(m.actuator_gaintype, muscle_mtu.MTU_GAINS).any():
+      vel += muscle_mtu.force_vel(m, d)
     qderiv = d._impl.actuator_moment.T @ jax.vmap(jp.multiply)(
         d._impl.actuator_moment, vel
     )

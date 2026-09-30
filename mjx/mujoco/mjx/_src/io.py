@@ -26,6 +26,7 @@ import mujoco
 from mujoco.mjx._src import collision_driver
 from mujoco.mjx._src import constraint
 from mujoco.mjx._src import mesh
+from mujoco.mjx._src import muscle_mtu
 from mujoco.mjx._src import support
 from mujoco.mjx._src import types
 import numpy as np
@@ -323,6 +324,9 @@ def _put_model_jax(
       fields_jax['mesh_convex'][dataid] = mesh.convex(m, dataid)  # pytype: disable=unsupported-operands
   fields_jax['mesh_convex'] = tuple(fields_jax['mesh_convex'])
 
+  # baked Millard curves, which the engine keeps outside mjModel
+  fields_jax.update(muscle_mtu.model_fields(m))
+
   jax_impl = types.ModelJAX(**fields_jax)
   model = types.Model(
       **{k: copy.copy(v) for k, v in fields.items()}, _impl=jax_impl
@@ -531,6 +535,11 @@ def _make_data_jax(
   zero_impl_fields = {
       k: np.zeros(v[:-1], dtype=v[-1]) for k, v in zero_impl_fields.items()
   }
+  public_fields = _make_data_public_fields(m)
+  # mj_resetData seeds each muscle-tendon fiber at its optimal length
+  act, muscle_fields = muscle_mtu.init_data(m, jp.asarray(public_fields['act']))
+  public_fields['act'] = act
+  zero_impl_fields.update(muscle_fields)
   impl = types.DataJAX(
       ne=ne,
       nf=nf,
@@ -546,7 +555,7 @@ def _make_data_jax(
       qpos=jp.array(m.qpos0, dtype=float_),
       eq_active=m.eq_active0,
       _impl=impl,
-      **_make_data_public_fields(m),
+      **public_fields,
   )
 
   if m.nmocap:

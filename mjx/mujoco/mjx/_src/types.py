@@ -287,14 +287,18 @@ class GainType(enum.IntEnum):
     FIXED: fixed gain
     AFFINE: const + kp*length + kv*velocity
     MUSCLE: muscle FLV curve computed by muscle_gain
+    COMPLIANT_MTU: compliant muscle-tendon unit (Geyer & Herr 2010, Song)
+    MILLARD_MTU: OpenSim Millard2012EquilibriumMuscle, damped
+    HYFYDY_MTU: Hyfydy muscle_force_m2012fast
   """
 
   FIXED = mujoco.mjtGain.mjGAIN_FIXED
   AFFINE = mujoco.mjtGain.mjGAIN_AFFINE
   MUSCLE = mujoco.mjtGain.mjGAIN_MUSCLE
-  # unsupported: USER, COMPLIANT_MTU, MILLARD_MTU, HYFYDY_MTU. The muscle-tendon
-  # units solve a per-actuator scalar Newton with a data-dependent trip count,
-  # which is not what MJX is for; put_model raises NotImplementedError on them.
+  COMPLIANT_MTU = mujoco.mjtGain.mjGAIN_COMPLIANT_MTU
+  MILLARD_MTU = mujoco.mjtGain.mjGAIN_MILLARD_MTU
+  HYFYDY_MTU = mujoco.mjtGain.mjGAIN_HYFYDY_MTU
+  # unsupported: USER
 
 
 class BiasType(enum.IntEnum):
@@ -488,6 +492,7 @@ class Option(PyTreeNode):
   enableflags: int
   disableactuator: int
   sdf_initpoints: int
+  cmtu_iter: int
 
 
 class OptionC(Option):
@@ -588,6 +593,10 @@ class ModelJAX(PyTreeNode):
   wrap_inside_tolerance: float
   wrap_inside_z_init: float
   is_wrap_inside: np.ndarray
+  # baked Millard2012 curve tables, one row per distinct curve (see muscle_mtu)
+  mtu_curve_knot: jax.Array
+  mtu_curve_meta: jax.Array
+  actuator_mtu_curve: np.ndarray
 
 
 class Model(PyTreeNode):
@@ -1056,6 +1065,11 @@ class DataJAX(PyTreeNode):
   cfrc_ext: jax.Array
   subtree_linvel: jax.Array
   subtree_angmom: jax.Array
+  # muscle-tendon unit outputs, written by fwd_actuation
+  muscle_l_ce: jax.Array
+  muscle_l_se: jax.Array
+  muscle_v_ce: jax.Array
+  muscle_F_mtu: jax.Array  # pylint:disable=invalid-name
   # dynamically sized data which are made static due to JAX limitations
   contact: Contact
   efc_type: jax.Array
