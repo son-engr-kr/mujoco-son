@@ -226,6 +226,7 @@ def _put_statistic(s: mujoco.MjStatistic) -> types.Statistic:
 def _put_model_jax(
     m: mujoco.MjModel,
     device: Optional[jax.Device] = None,
+    solver_dtype: Optional[str] = None,
 ) -> types.Model:
   """Puts mujoco.MjModel onto a device, resulting in mjx.Model."""
   mesh_geomid = set()
@@ -284,7 +285,9 @@ def _put_model_jax(
   mj_field_names = {f.name for f in types.Model.fields() if f.name != '_impl'}
   fields = {f: getattr(m, f) for f in mj_field_names}
   fields['cam_mat0'] = fields['cam_mat0'].reshape((-1, 3, 3))
-  fields['opt'] = _put_option(m.opt, types.BackendImpl.JAX)
+  fields['opt'] = _put_option(
+      m.opt, types.BackendImpl.JAX, {'solver_dtype': solver_dtype}
+  )
   fields['stat'] = _put_statistic(m.stat)
 
   fields_jax = {}
@@ -365,6 +368,8 @@ def put_model(
     device: Optional[jax.Device] = None,
     backend_impl: Optional[Union[str, types.BackendImpl]] = None,
     _full_compat: bool = False,  # pylint: disable=invalid-name
+    *,
+    solver_dtype: Optional[Any] = None,
 ) -> types.Model:
   """Puts mujoco.MjModel onto a device, resulting in mjx.Model.
 
@@ -374,14 +379,22 @@ def put_model(
     backend_impl: backend implementation to use
     _full_compat: put all MjModel fields onto device irrespective of MJX support
       This is an experimental feature.  Avoid using it for now.
+    solver_dtype: ``jnp.float64`` (or ``'float64'``) runs the constraint solve
+      in double precision while everything else stays in the data's precision,
+      with jax_enable_x64 off; see solver.solve. None, the default, solves in
+      the data's precision. JAX backend only.
 
   Returns:
     an mjx.Model placed on device
 
   Raises:
-    ValueError: if backend_impl is not supported
+    ValueError: if backend_impl or solver_dtype is not supported
     DeprecationWarning: if _full_compat is True
   """
+  if solver_dtype is not None:
+    solver_dtype = np.dtype(solver_dtype).name
+    if solver_dtype != 'float64':
+      raise ValueError(f'solver_dtype must be float64 or None, got {solver_dtype}')
 
   if _full_compat:
     warnings.warn(
@@ -394,8 +407,10 @@ def put_model(
 
   backend_impl, device = _resolve_backend_impl_and_device(backend_impl, device)
   if backend_impl == types.BackendImpl.JAX:
-    return _put_model_jax(m, device)
-  elif backend_impl == types.BackendImpl.C:
+    return _put_model_jax(m, device, solver_dtype)
+  if solver_dtype is not None:
+    raise ValueError('solver_dtype is only supported by the JAX backend')
+  if backend_impl == types.BackendImpl.C:
     return _put_model_c(m, device)
   elif backend_impl == types.BackendImpl.WARP:
     raise NotImplementedError('Warp backend not implemented yet.')

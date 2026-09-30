@@ -16,6 +16,7 @@
 
 import jax
 from jax import numpy as jp
+from jax.experimental import enable_x64
 import mujoco
 from mujoco.mjx._src import math
 from mujoco.mjx._src import smooth
@@ -550,8 +551,75 @@ def _linesearch(m: Model, d: Data, ctx: Context) -> Context:
   return ctx
 
 
+def _cast(tree, dtype):
+  return jax.tree_util.tree_map(
+      lambda x: x.astype(dtype) if jp.issubdtype(x.dtype, jp.floating) else x,
+      tree,
+  )
+
+
+def _cast_like(tree, like):
+  return jax.tree_util.tree_map(
+      lambda x, y: x.astype(y.dtype) if jp.issubdtype(y.dtype, jp.floating) else x,
+      tree,
+      like,
+  )
+
+
+def _solve_float64(m: Model, d: Data) -> Data:
+  """_solve in double precision, returning d in its own precision."""
+  with enable_x64():
+    return _cast_like(_solve(_cast(m, jp.float64), _cast(d, jp.float64)), d)
+
+
+# The backward pass also has to run under enable_x64, which a plain transpose,
+# traced after the context has exited, would not.
+_solve_widened = jax.custom_vjp(_solve_float64)
+
+
+def _solve_widened_fwd(m: Model, d: Data):
+  return _solve_float64(m, d), (m, d)
+
+
+def _solve_widened_bwd(res, ct):
+  m, d = res
+  with enable_x64():
+    _, vjp = jax.vjp(_solve_float64, m, d)
+    return vjp(ct)
+
+
+_solve_widened.defvjp(_solve_widened_fwd, _solve_widened_bwd)
+
+
 def solve(m: Model, d: Data) -> Data:
-  """Finds forces that satisfy constraints using conjugate gradient descent."""
+  """Finds forces that satisfy constraints using conjugate gradient descent.
+
+  With ``solver_dtype='float64'`` given to put_model and the model and data in
+  single precision, the solve alone runs in double precision and its outputs
+  are cast back. On musculoskeletal models, whose joint equalities couple light
+  via-point bodies to the joints, a single-precision rollout diverges although
+  each single-precision step agrees with double precision to about 1e-4, and
+  doing only this solve in double precision keeps it with an all-double run.
+  jax_enable_x64 stays off: the solve enables it locally, so nothing outside it
+  can become f64.
+
+  The widened solve differentiates exactly as the plain one does, which is in
+  reverse mode only when opt.iterations is 1; it does not support forward mode.
+
+  Args:
+    m: the model
+    d: the data
+
+  Returns:
+    d with qacc, qacc_warmstart, qfrc_constraint and efc_force solved
+  """
+  if m.opt.solver_dtype == 'float64' and d.qacc.dtype != jp.float64:
+    return _solve_widened(m, d)
+  return _solve(m, d)
+
+
+def _solve(m: Model, d: Data) -> Data:
+  """solve, in the precision of its inputs."""
 
   def cond(ctx: Context) -> jax.Array:
     improvement = _rescale(m, ctx.prev_cost - ctx.cost)

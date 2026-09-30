@@ -15,7 +15,7 @@
 """Base types used in MJX."""
 
 import enum
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 import warnings
 
 import jax
@@ -510,6 +510,8 @@ class OptionJAX(Option):
   """JAX-specific option."""
 
   has_fluid_params: bool
+  # precision of the constraint solve; None solves in the data's own precision
+  solver_dtype: Optional[str] = None
 
 
 class ModelC(PyTreeNode):
