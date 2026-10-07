@@ -119,6 +119,51 @@ class SensorTest(parameterized.TestCase):
     with self.assertRaises(NotImplementedError):
       mjx.put_model(m)
 
+  def test_limit_force(self):
+    """Tests jointlimitfrc and tendonlimitfrc against C."""
+    m = mujoco.MjModel.from_xml_string("""
+      <mujoco>
+        <worldbody>
+          <site name="s0" pos=".1 0 -.1"/>
+          <body>
+            <joint type="hinge" axis="1 0 0"/>
+            <joint name="hinge" type="hinge" axis="0 1 0" range="-.1 .1"/>
+            <joint name="slide" type="slide" axis="0 0 1" range="-.1 .1"/>
+            <geom size="0.1" pos="0 .2 0" contype="0" conaffinity="0"/>
+            <site name="s1" pos="0 .2 0"/>
+            <body pos="0 .3 0">
+              <joint name="ball" type="ball" range="0 .2"/>
+              <geom size="0.1" pos="0 .2 0" contype="0" conaffinity="0"/>
+            </body>
+          </body>
+        </worldbody>
+        <tendon>
+          <spatial name="loose" range="0 1"><site site="s0"/><site site="s1"/></spatial>
+          <spatial name="taut" range="0 .2"><site site="s0"/><site site="s1"/></spatial>
+        </tendon>
+        <sensor>
+          <jointlimitfrc joint="ball"/>
+          <jointlimitfrc joint="hinge"/>
+          <jointlimitfrc joint="slide"/>
+          <tendonlimitfrc tendon="loose"/>
+          <tendonlimitfrc tendon="taut"/>
+        </sensor>
+        <keyframe>
+          <key qpos="0 .3 -.2 .9 .4 0 0"/>
+        </keyframe>
+      </mujoco>
+    """)
+    d = mujoco.MjData(m)
+    mujoco.mj_resetDataKeyframe(m, d, 0)
+    mujoco.mj_forward(m, d)
+    # every limit is active but the loose tendon's, which reads zero; the
+    # ball, hinge and taut tendon limits carry force here
+    self.assertEqual(d.nl, 4)
+    self.assertTrue(np.all(d.sensordata[[0, 1, 4]] != 0))
+    self.assertEqual(d.sensordata[3], 0)
+    dx = jax.jit(mjx.forward)(mjx.put_model(m), mjx.put_data(m, d))
+    np.testing.assert_allclose(dx.sensordata, d.sensordata, rtol=1e-4, atol=1e-4)
+
 
 if __name__ == '__main__':
   absltest.main()

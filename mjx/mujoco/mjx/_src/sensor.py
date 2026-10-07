@@ -18,6 +18,7 @@ import jax
 from jax import numpy as jp
 import mujoco
 # pylint: disable=g-importing-member
+from mujoco.mjx._src import constraint
 from mujoco.mjx._src import math
 from mujoco.mjx._src import ray
 from mujoco.mjx._src import smooth
@@ -26,6 +27,7 @@ from mujoco.mjx._src.types import BackendImpl
 from mujoco.mjx._src.types import Data
 from mujoco.mjx._src.types import DataJAX
 from mujoco.mjx._src.types import DisableBit
+from mujoco.mjx._src.types import JointType
 from mujoco.mjx._src.types import Model
 from mujoco.mjx._src.types import ModelJAX
 from mujoco.mjx._src.types import ObjType
@@ -426,6 +428,27 @@ def sensor_vel(m: Model, d: Data) -> Data:
   return d.replace(sensordata=sensordata)
 
 
+def _limit_rows(m: Model, joint: bool) -> np.ndarray:
+  """Returns the efc row of each joint's or tendon's limit, -1 if it has none."""
+  n = m.njnt if joint else m.ntendon
+  rows = -np.ones(n, dtype=int)
+  efc_type = constraint.make_efc_type(m)
+  if m.opt.disableflags & DisableBit.LIMIT or not efc_type.size:
+    return rows
+  ne, nf, _, _ = constraint.counts(efc_type)
+  # the order of make_constraint: ball joints, then slide and hinge, tendons
+  ball = (m.jnt_type == JointType.BALL) & m.jnt_limited
+  slide_hinge = np.isin(m.jnt_type, (JointType.SLIDE, JointType.HINGE))
+  slide_hinge &= m.jnt_limited.astype(bool)
+  order = np.concatenate([np.nonzero(ball)[0], np.nonzero(slide_hinge)[0]])
+  start = ne + nf
+  if not joint:
+    order = np.nonzero(m.tendon_limited)[0]
+    start += ball.sum() + slide_hinge.sum()
+  rows[order] = start + np.arange(order.size)
+  return rows
+
+
 def sensor_acc(m: Model, d: Data) -> Data:
   """Compute acceleration/force-dependent sensors values."""
   if not isinstance(m._impl, ModelJAX) or not isinstance(d._impl, DataJAX):
@@ -564,6 +587,12 @@ def sensor_acc(m: Model, d: Data) -> Data:
       sensor = d.actuator_force[objid]
     elif sensor_type == SensorType.JOINTACTFRC:
       sensor = d.qfrc_actuator[m.jnt_dofadr[objid]]
+    elif sensor_type in (SensorType.JOINTLIMITFRC, SensorType.TENDONLIMITFRC):
+      # the force of the object's limit row, as in C; MJX keeps a row for every
+      # limited joint and tendon, whose force is zero while it is inactive
+      row = _limit_rows(m, sensor_type == SensorType.JOINTLIMITFRC)[objid]
+      force = jp.concatenate([d._impl.efc_force, jp.zeros(1)])
+      sensor = force[np.where(row >= 0, row, -1)]
     elif sensor_type == SensorType.TENDONACTFRC:
       force_mask = [
           (m.actuator_trntype == TrnType.TENDON)

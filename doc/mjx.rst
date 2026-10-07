@@ -246,7 +246,8 @@ The following features are **fully supported** in MJX:
        ``FRAMEPOS``, ``FRAMEXAXIS``, ``FRAMEYAXIS``, ``FRAMEZAXIS``, ``FRAMEQUAT``, ``SUBTREECOM``, ``CLOCK``,
        ``VELOCIMETER``, ``GYRO``, ``JOINTVEL``, ``TENDONVEL``, ``ACTUATORVEL``, ``BALLANGVEL``, ``FRAMELINVEL``,
        ``FRAMEANGVEL``, ``SUBTREELINVEL``, ``SUBTREEANGMOM``, ``TOUCH``, ``ACCELEROMETER``, ``FORCE``, ``TORQUE``,
-       ``ACTUATORFRC``, ``JOINTACTFRC``, ``TENDONACTFRC``, ``FRAMELINACC``, ``FRAMEANGACC``
+       ``ACTUATORFRC``, ``JOINTACTFRC``, ``TENDONACTFRC``, ``JOINTLIMITFRC``, ``TENDONLIMITFRC``, ``FRAMELINACC``,
+       ``FRAMEANGACC``
        (``ACCELEROMETER``, ``FORCE``, ``TORQUE`` not supported with connect or weld equality constraints)
 
 The following features are **in development** and coming soon:

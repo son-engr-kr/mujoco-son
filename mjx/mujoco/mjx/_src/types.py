@@ -390,6 +390,8 @@ class SensorType(enum.IntEnum):
     ACTUATORFRC: scalar actuator force
     JOINTACTFRC: scalar actuator force, measured at the joint
     TENDONACTFRC: scalar actuator force, measured at the tendon
+    JOINTLIMITFRC: joint limit force
+    TENDONLIMITFRC: tendon limit force
     FRAMELINACC: 3D linear acceleration
     FRAMEANGACC: 3D angular acceleration
   """
@@ -425,6 +427,8 @@ class SensorType(enum.IntEnum):
   ACTUATORFRC = mujoco.mjtSensor.mjSENS_ACTUATORFRC
   JOINTACTFRC = mujoco.mjtSensor.mjSENS_JOINTACTFRC
   TENDONACTFRC = mujoco.mjtSensor.mjSENS_TENDONACTFRC
+  JOINTLIMITFRC = mujoco.mjtSensor.mjSENS_JOINTLIMITFRC
+  TENDONLIMITFRC = mujoco.mjtSensor.mjSENS_TENDONLIMITFRC
   FRAMELINACC = mujoco.mjtSensor.mjSENS_FRAMELINACC
   FRAMEANGACC = mujoco.mjtSensor.mjSENS_FRAMEANGACC
 
