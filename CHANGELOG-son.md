@@ -3,6 +3,70 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## v3.3.3+son5.1
+
+### Fixed (MJX): sphere and capsule contacts with an ellipsoid
+
+`sphere_ellipsoid` and `capsule_ellipsoid` ran ten gradient-descent steps on a clearance function
+from the midpoint of the two geom centers, with an approximate ellipsoid SDF. On myolegs' foot geoms
+(a capsule of radius 20 mm against an ellipsoid of semi-axes 85, 35, 40 mm), at 102 random poses with
+distances from -20 to 10 mm, the distance was off by up to 25 mm and 12 contacts were missed or
+invented. The exact SDF alone did not help (up to 22 mm); the optimizer was the main error. The code
+is upstream's and unchanged up to 3.15.0, which has the same error.
+
+- The closest point on an ellipsoid is exact: Newton's method on Eberly's (2013) secular equation in
+  the form `1/|p(t)| = 1`, concave in `t`, so iterates started left of the root rise monotonically to
+  it, as `mjc_ellipsoidOutside` does in C. 14 iterations; points outside converge in about 5.
+- A sphere is exact in every regime, the sphere center inside the ellipsoid included.
+- A capsule takes the axis point where the signed distance, convex along the axis, is least, found by
+  30 bisections on the sign of its derivative. This is exact while the axis is outside the
+  ellipsoid, that is, for penetration up to the radius. With the axis inside, it is the depth of the
+  deepest axis point: equal to the penetration depth C computes (EPA) when that point is a smooth
+  minimum, and less than it when the point lies on the plane of the smallest semi-axis (40 of 395
+  deep random poses).
+- Against the exact solution, distance, position and normal agree to 1e-10 m in float64 and 2e-8 m in
+  float32, and reverse-mode gradients match central differences to 6e-8. The contact position is the
+  midpoint of the two surface points, as in C.
+- On the CPU in float32, 4096 capsule-ellipsoid pairs take 6.6 ms against 7.4 ms before, and compile
+  in half the time. The cost on a GPU, where the 30 sequential bisections may matter more, is not
+  measured.
+
+The other pairs that use the same optimizer (`sphere_cylinder`, `capsule_cylinder`,
+`ellipsoid_ellipsoid`, `ellipsoid_cylinder`, `cylinder_cylinder`) are unchanged.
+
+### Fixed: GJK returned a stale distance from a tetrahedron simplex (upstream 50fa598d)
+
+A backport of upstream's one-line fix in 3.3.5. When the simplex of a sphere or capsule, which GJK
+shrinks to its center or axis, became a tetrahedron containing the origin, `gjk()` kept the previous
+iterate's distance. A sphere center or capsule axis inside an ellipsoid, cylinder, mesh or height
+field was then reported shallower than the radius, or not in contact at all, by both `mj_collision`
+and `mj_geomDistance`. On 177 random capsule-ellipsoid poses within 10 mm of contact, the axis was
+inside the ellipsoid in 75, and every one of those was reported shallower than the radius. With
+`ccd_tolerance="1e-8"` the contact position was also off by up to 23 mm in 6 of 104 shallow contacts
+(none at the default 1e-6).
+
+The fix changes no contact-free result. A myolegs (hanging) and a MyoFullBody rollout from their
+keyframes, 2000 steps with contacts on and zero control, are bit-identical with and without it.
+
+### Verification
+
+- `collision_driver_test.py`: the new tests compare 20 random sphere and capsule poses with C and a
+  sphere and a capsule centered in an ellipsoid with the exact result; they fail on son5.0's MJX.
+  41 tests pass in float32. In float64, `test_ellipsoid_cylinder` fails before and after this release.
+- The whole MJX suite, 417 tests, passes (son5.0's 413 and the four new ones).
+- Two C tests, capsules whose axis crosses an ellipsoid, fail without the GJK fix; the C suite, 803
+  tests, passes with it.
+- The MJX side is upstream main's change for the same two functions, checked there against PyPI's
+  mujoco 3.15.0.
+
+### Found, not fixed
+
+- The `build` workflow has failed at "Install MJX" since son5.0: it installs MJX's
+  `requirements.txt` (jax 0.4.34) and then the wheel, which pins `jax==0.7.2`, with `--no-index`.
+  MJX's tests have therefore not run in CI since then; the ones above were run locally.
+- MuJoCo C (3.3.3 and 3.15.0) reports no contact for a sphere or capsule whose center is exactly the
+  center of an ellipsoid.
+
 ## v3.3.3+son5.0
 
 ### Added: MJX runs `compliant_mtu`, `millard_mtu` and `hyfydy_mtu`

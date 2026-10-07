@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name="mujoco-mjx"
-version = "3.3.3+son5.0"
+version = "3.3.3+son5.1"
 authors = [
     {name = "Google DeepMind", email = "mujoco@deepmind.com"},
 ]
@@ -33,7 +33,7 @@ dependencies = [
     "jaxlib==0.7.2",
     # the muscle-tendon gains, their Python bindings and mjOption.cmtu_iter come from the
     # mujoco-son build of the same version; PyPI's mujoco has none of them
-    "mujoco==3.3.3+son5.0",
+    "mujoco==3.3.3+son5.1",
     "scipy",
     "trimesh",
 ]
