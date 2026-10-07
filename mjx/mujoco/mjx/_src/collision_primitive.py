@@ -18,6 +18,7 @@ from typing import Tuple
 
 import jax
 from jax import numpy as jp
+import mujoco
 from mujoco.mjx._src import math
 # pylint: disable=g-importing-member
 from mujoco.mjx._src.collision_types import Collision
@@ -197,12 +198,32 @@ def capsule_capsule(cap1: GeomInfo, cap2: GeomInfo) -> Collision:
   axis1, length1 = cap1.mat[:, 2], cap1.size[1]
   axis2, length2 = cap2.mat[:, 2], cap2.size[1]
   seg1, seg2 = axis1 * length1, axis2 * length2
-  pt1, pt2 = math.closest_segment_to_segment_points(
+
+  # closest points of the axes at cap1.pos + x1 * seg1, cap2.pos + x2 * seg2,
+  # clipped to [-1, 1] first in x1 and then in x2, as mjraw_CapsuleCapsule does
+  dif = cap1.pos - cap2.pos
+  ma, mb, mc = jp.dot(seg1, seg1), -jp.dot(seg1, seg2), jp.dot(seg2, seg2)
+  u, v = -jp.dot(seg1, dif), jp.dot(seg2, dif)
+  det = ma * mc - mb * mb
+  parallel = jp.abs(det) < mujoco.mjMINVAL
+  det = jp.where(parallel, 1.0, det)
+  x1, x2 = (mc * u - mb * v) / det, (ma * v - mb * u) / det
+  x2 = jp.where(x1 > 1, (v - mb) / mc, jp.where(x1 < -1, (v + mb) / mc, x2))
+  x1 = jp.clip(x1, -1, 1)
+  x1_hi, x1_lo = jp.clip((u - mb) / ma, -1, 1), jp.clip((u + mb) / ma, -1, 1)
+  x1 = jp.where(x2 > 1, x1_hi, jp.where(x2 < -1, x1_lo, x1))
+  x2 = jp.clip(x2, -1, 1)
+  pt1, pt2 = cap1.pos + x1 * seg1, cap2.pos + x2 * seg2
+
+  # parallel axes: one contact in the middle of the overlap, where C makes two
+  pt1_parallel, pt2_parallel = math.closest_segment_to_segment_points(
       cap1.pos - seg1,
       cap1.pos + seg1,
       cap2.pos - seg2,
       cap2.pos + seg2,
   )
+  pt1 = jp.where(parallel, pt1_parallel, pt1)
+  pt2 = jp.where(parallel, pt2_parallel, pt2)
   radius1, radius2 = cap1.size[0], cap2.size[0]
   dist, pos, n = _sphere_sphere(pt1, radius1, pt2, radius2)
   return dist, pos, math.make_frame(n)

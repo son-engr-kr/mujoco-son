@@ -446,6 +446,53 @@ class CapsuleCollisionTest(parameterized.TestCase):
     for field in dataclasses.fields(Contact):
       _assert_attr_eq(dx._impl.contact, d.contact, field.name, name, 1e-4)
 
+  _CAP_POSES = """
+    <mujoco>
+      <worldbody>
+        <body>
+          <freejoint/>
+          <geom type="{type}" size="{size}"/>
+        </body>
+        <body>
+          <freejoint/>
+          <geom type="capsule" size=".005 .01"/>
+        </body>
+      </worldbody>
+    </mujoco>
+  """
+
+  @parameterized.parameters(('sphere', '.005'), ('capsule', '.005 .01'))
+  def test_capsule_random_poses(self, geom_type, size):
+    """Tests sphere and capsule capsule contacts at random poses."""
+    # small geoms: a regularizer of 1e-6 in the segment projection used to
+    # move the contact by 25 um and turn the normal by 5 degrees here
+    m = mujoco.MjModel.from_xml_string(
+        self._CAP_POSES.format(type=geom_type, size=size)
+    )
+    d = mujoco.MjData(m)
+    mx = mjx.put_model(m)
+    collide = jax.jit(lambda m, d: mjx.collision(m, mjx.kinematics(m, d)))
+    rng = np.random.default_rng(0)
+    ntest = 0
+    while ntest < 20:
+      quat1, quat2 = rng.normal(size=(2, 4))
+      d.qpos = np.concatenate([
+          np.zeros(3),
+          quat1 / np.linalg.norm(quat1),
+          rng.uniform(-0.02, 0.02, 3),
+          quat2 / np.linalg.norm(quat2),
+      ])
+      mujoco.mj_forward(m, d)
+      if d.ncon != 1:
+        continue
+      ntest += 1
+      contact = collide(mx, mjx.put_data(m, d))._impl.contact
+      np.testing.assert_allclose(contact.dist, d.contact.dist, atol=1e-7)
+      np.testing.assert_allclose(contact.pos, d.contact.pos, atol=1e-7)
+      np.testing.assert_allclose(
+          contact.frame[:, 0], d.contact.frame[:, :3], atol=1e-4
+      )
+
   _PARALLEL_CAP = """
     <mujoco>
       <worldbody>

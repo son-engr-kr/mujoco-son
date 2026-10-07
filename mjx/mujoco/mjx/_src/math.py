@@ -324,7 +324,10 @@ def closest_segment_point(
 ) -> jax.Array:
   """Returns the closest point on the a-b line segment to a point pt."""
   ab = b - a
-  t = jp.dot(pt - a, ab) / (jp.dot(ab, ab) + 1e-6)
+  # a regularizer added to |ab|^2 would bias t by its ratio to |ab|^2, which is
+  # not small for short segments; only a zero-length segment needs a guard
+  ab2 = jp.dot(ab, ab)
+  t = jp.dot(pt - a, ab) / jp.where(ab2 > 0, ab2, 1.0)
   return a + jp.clip(t, 0.0, 1.0) * ab
 
 
