@@ -3,6 +3,87 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## v3.3.3+son5.2
+
+MJX only; the C engine is son5.1's. With these, the hanging myolegs model (elliptic cone, condim=1
+pairs, contacts on, zero control) follows C in float64 to 5e-7 in `qpos` over 2000 steps, and to
+3e-8 with C's `ccd_tolerance` at 1e-10. son5.1 parted from C at its first capsule-capsule contact.
+
+### Fixed (MJX): sphere and capsule contacts with a capsule
+
+`math.closest_segment_point` divided by `|ab|^2 + 1e-6`. The regularizer is in squared meters, so it
+biased the projection on short segments: against C, contacts moved by up to 25 um and normals turned
+by up to 0.1 with capsules of radius 5 mm and half-length 10 mm, and by 3 um and 2.5e-3 on myolegs'
+foot capsules. Only a zero-length segment is guarded now. `capsule_capsule` follows
+`mjraw_CapsuleCapsule`: the closest points of the two lines, clipped first on the first axis and then
+on the second, instead of clipping both independently. Parallel axes keep their one contact in the
+middle of the overlap, where C makes two. Both pairs agree with C to 1e-16 m in position and 1e-14
+in normal in float64.
+
+### Fixed (MJX): ellipsoid-ellipsoid contacts
+
+`ellipsoid_ellipsoid` used the same ten-step gradient descent on an approximate SDF that son5.1
+replaced for spheres and capsules. With upstream's test ellipsoids, at 200 random poses within 2 cm
+of contact, its distance was off C's by up to 74 mm and 25 contacts were missed or invented; on
+myolegs' foot ellipsoids it reported +1.3 mm where C reports -2.16 mm. It now takes the largest
+support gap over directions, `dpos . u - sqrt(u . a1 u) - sqrt(u . a2 u)`, which is the distance
+apart and minus the penetration depth (EPA's minimum translation) in overlap, by Newton's method on
+the sphere from seven starts. It agrees with a global search to 1e-16 m in float64 and 3e-8 m in
+float32, and with C's distance to 1e-6 m.
+
+### Added (MJX): condim=1 contacts under an elliptic cone
+
+`make_data` refused them, but the solver already handled them, as `put_data`, which never refused
+them, showed. The refusal is gone. The cone's six-wide slices padded only three zeros, so a model
+with fewer than three constraint rows failed to trace; they pad six now, which lifts the "at least
+three constraint rows" limit noted under son5.0.
+
+### Fixed (MJX): acceleration sensors after the constraint solve
+
+`forward` computed touch, accelerometer, force, torque, the actuator forces and the frame
+accelerations before the solve, so they read the previous step's `qacc` and constraint forces. They
+come after it now, as in `mj_forward`, including when there are no constraint rows. On a ball
+dropped on a plane, son5.1's touch and accelerometer differed from C by up to 891 over 300 steps and
+agree to 1e-6 now.
+
+### Added (MJX): `jointlimitfrc` and `tendonlimitfrc` sensors
+
+The force of the joint's or tendon's limit row, as `mj_sensorAcc` reads it, zero while the limit is
+inactive.
+
+### Comparing with C
+
+C's EPA sets the floor. At the default `ccd_tolerance`, its capsule-ellipsoid normals are off the
+exact ones by about 6e-6 and its ellipsoid-ellipsoid normals by up to 2e-2. For MJX-C comparisons
+with these pairs, set `ccd_tolerance` near 1e-10, and keep `ccd_iterations` at 170 or less: this
+3.3.3 engine's `mj_geomDistance` uses a static EPA buffer of that size and crashes above it. On
+MyoFullBody the humerus-thorax contacts match C to nine digits, and what remains is C's normal
+(1.6e-7 off at `ccd_tolerance` 1e-10), amplified by the model.
+
+### Verification
+
+- The whole MJX suite, 424 tests, passes. `test_ellipsoid_cylinder` fails in float64 before and after,
+  as upstream's does.
+- New tests: random sphere-capsule and capsule-capsule poses against C, ellipsoid-ellipsoid against
+  C's distance and the support gap over sampled directions, condim=1 under both cones and a sliding
+  sphere with a condim=1 pair against C, and the two limit sensors against C. Each fails on son5.1.
+
+### Upstream
+
+The ellipsoid pairs are reported as google-deepmind/mujoco#3670, with PRs to follow.
+
+### Found, not fixed
+
+- Margin and gap on mesh and height-field pairs are still refused. MyoAssist's myoLeg22 and myoLeg26
+  have margin on 14 plane-mesh, 14 hfield-mesh and 315 mesh-mesh pairs. `plane_convex` would need
+  the margin passed in to pick vertices within it; the mesh and height-field functions are
+  penetration-only SAT and would need a different algorithm.
+- `jit(mjx.step)` on myoLeg22 compiles 402 collision groups, 340 of them mesh-mesh between the left
+  and right legs (meshes of up to 5432 vertices). Without the mesh-mesh pairs it compiles in 76 s,
+  measured with the margins zeroed, since `put_model` refuses them.
+- The `build` workflow still fails at "Install MJX" (jax 0.4.34 from MJX's requirements.txt against
+  the wheel's `jax==0.7.2`), so MJX's tests run locally only.
+
 ## v3.3.3+son5.1
 
 ### Fixed (MJX): sphere and capsule contacts with an ellipsoid
