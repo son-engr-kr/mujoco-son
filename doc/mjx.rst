@@ -232,7 +232,7 @@ The following features are **fully supported** in MJX:
    * - :ref:`Cone <mjtCone>`
      - ``PYRAMIDAL``, ``ELLIPTIC``
    * - :ref:`Condim <coContact>`
-     - 1, 3, 4, 6 (1 is not supported with ``ELLIPTIC``)
+     - 1, 3, 4, 6
    * - :ref:`Solver <mjtSolver>`
      - ``CG``, ``NEWTON``
    * - Dynamics

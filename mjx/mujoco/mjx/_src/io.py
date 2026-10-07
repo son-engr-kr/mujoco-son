@@ -521,11 +521,6 @@ def _make_data_jax(
   int_ = jp.zeros(1, int).dtype
   contact = _make_data_contact_jax(dim, efc_address)
 
-  if m.opt.cone == types.ConeType.ELLIPTIC and np.any(contact.dim == 1):
-    raise NotImplementedError(
-        'condim=1 with ConeType.ELLIPTIC not implemented.'
-    )
-
   zero_impl_fields = {
       'solver_niter': (int_,),
       'cdof': (m.nv, 6, float_),

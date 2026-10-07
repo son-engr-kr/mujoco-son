@@ -147,8 +147,7 @@ class SolverTest(parameterized.TestCase):
     nnz = dx._impl.efc_J.any(axis=1)
     _assert_eq(d.efc_force, dx._impl.efc_force[nnz], 'efc_force')
 
-  # TODO(taylorhowell): condim=1 with ConeType.ELLIPTIC
-  @parameterized.product(condim=(3, 4, 6), cone=tuple(ConeType))
+  @parameterized.product(condim=(1, 3, 4, 6), cone=tuple(ConeType))
   def test_condim(self, condim, cone):
     """Test contact dimension."""
     m = mujoco.MjModel.from_xml_string(f"""
@@ -165,12 +164,46 @@ class SolverTest(parameterized.TestCase):
     m.opt.cone = cone
     solver.solve(mjx.put_model(m), mjx.put_data(m, mujoco.MjData(m)))
 
+  def test_elliptic_cone_with_frictionless_pair(self):
+    """A condim=1 pair and a cone contact, sliding, under an elliptic cone."""
+    m = mujoco.MjModel.from_xml_string("""
+       <mujoco>
+          <option cone="elliptic"/>
+          <worldbody>
+            <geom size="0 0 1e-5" type="plane"/>
+            <body pos="0 0 0.09">
+              <freejoint/>
+              <geom name="a" size="0.1"/>
+            </body>
+            <body pos="0.1 0 0.25">
+              <freejoint/>
+              <geom name="b" size="0.1" contype="0" conaffinity="0"/>
+            </body>
+          </worldbody>
+          <contact>
+            <pair geom1="a" geom2="b" condim="1"/>
+          </contact>
+        </mujoco>
+    """)
+    d = mujoco.MjData(m)
+    d.qvel[:6] = [0.5, 0, 0, 0, 0, 2]
+    mujoco.mj_forward(m, d)
+    np.testing.assert_array_equal(np.sort(d.contact.dim[: d.ncon]), [1, 3])
+    mx = mjx.put_model(m)
+    dx = jax.jit(mjx.forward)(mx, mjx.put_data(m, d))
+    np.testing.assert_array_equal(
+        np.sort(mjx.make_data(m)._impl.contact.dim), [1, 3]
+    )
+    np.testing.assert_allclose(dx.qacc, d.qacc, rtol=1e-4, atol=1e-4)
+    np.testing.assert_allclose(
+        dx.qfrc_constraint, d.qfrc_constraint, rtol=1e-4, atol=1e-4
+    )
+
   def test_elliptic_cone_without_contacts(self):
     """An elliptic cone with constraints but no cone rows.
 
     The cone bookkeeping built its index arrays from Python lists, and an empty
-    list makes a float array, which cannot index. Three limit rows, since the
-    cone's fixed six-wide slices also need nefc >= 3.
+    list makes a float array, which cannot index.
     """
     m = mujoco.MjModel.from_xml_string("""
        <mujoco>

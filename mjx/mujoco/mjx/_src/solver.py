@@ -294,10 +294,11 @@ def _update_constraint(m: Model, d: Data, ctx: Context) -> Context:
     friction = d._impl.contact.friction[d._impl.contact.dim > 1]
     efc_address = d._impl.contact.efc_address[d._impl.contact.dim > 1]
     dim = d._impl.contact.dim[d._impl.contact.dim > 1]
-    # to prevent out of range append zeros to ctx.Jaref
+    # to prevent out of range append zeros to ctx.Jaref; six, so that the slice
+    # fits even with fewer than three rows and no cone (condim=1 contacts)
     slice_fn = jax.vmap(
         lambda x: jax.lax.dynamic_slice(
-            jp.concatenate((ctx.Jaref, jp.zeros((3)))), (x,), (6,)
+            jp.concatenate((ctx.Jaref, jp.zeros(6))), (x,), (6,)
         )
     )
     u = slice_fn(efc_address) * ctx.fri
@@ -465,10 +466,10 @@ def _linesearch(m: Model, d: Data, ctx: Context) -> Context:
     quad = quad.at[efc_con].add(quad[efc_fri])
 
     # rescale to make primal cone circular
-    # to prevent out of range append zeros to jv
+    # to prevent out of range append zeros to jv, six as in _update_constraint
     jv_fn = jax.vmap(
         lambda x: jax.lax.dynamic_slice(
-            jp.concatenate((jv, jp.zeros(3))), (x,), (6,)
+            jp.concatenate((jv, jp.zeros(6))), (x,), (6,)
         )
     )
     efc_elliptic = d._impl.contact.efc_address[mask]

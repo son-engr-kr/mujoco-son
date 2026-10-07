@@ -608,7 +608,7 @@ class DataIOTest(parameterized.TestCase):
     step_fn_jit(mjx.make_data(m, backend_impl=backend_impl))
 
   def test_contact_elliptic_condim1(self):
-    """Test that condim=1 with ConeType.ELLIPTIC is not implemented."""
+    """Tests make_data with a condim=1 contact under ConeType.ELLIPTIC."""
     m = mujoco.MjModel.from_xml_string("""
       <mujoco>
         <worldbody>
@@ -621,8 +621,12 @@ class DataIOTest(parameterized.TestCase):
       </mujoco>
     """)
     m.opt.cone = ConeType.ELLIPTIC
-    with self.assertRaises(NotImplementedError):
-      mjx.make_data(m)
+    dx = mjx.make_data(m)
+    # a frictionless contact is one row, as in C
+    np.testing.assert_array_equal(dx._impl.contact.dim, [1])
+    np.testing.assert_array_equal(
+        dx._impl.efc_type, [mujoco.mjtConstraint.mjCNSTR_CONTACT_FRICTIONLESS]
+    )
 
   @parameterized.product(
       sensor=['accelerometer', 'force', 'torque'], equality=['connect', 'weld']
