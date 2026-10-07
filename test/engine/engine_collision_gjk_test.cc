@@ -1939,6 +1939,56 @@ TEST_F(MjGjkTest, CapsuleCapsule) {
   mj_deleteModel(model);
 }
 
+// A capsule whose axis passes 5 mm from the center of an ellipsoid. When the
+// GJK simplex of the shrunk capsule became a tetrahedron, gjk() returned the
+// previous iterate's distance, so the contact was reported shallower than the
+// radius, or not at all (fixed upstream by 50fa598d). The expected distances
+// are those of the deepest axis point, equal here to the minimum translation.
+void ExpectCapsuleEllipsoidDist(const char* xml, mjtNum dist) {
+  std::array<char, 1000> error;
+  mjModel* model = LoadModelFromString(xml, error.data(), error.size());
+  ASSERT_THAT(model, NotNull()) << "Failed to load model: " << error.data();
+
+  mjData* data = mj_makeData(model);
+  mj_forward(model, data);
+
+  ASSERT_EQ(data->ncon, 1);
+  EXPECT_NEAR(data->contact[0].dist, dist, 1e-6);
+  EXPECT_NEAR(mj_geomDistance(model, data, 0, 1, 1, nullptr), dist, 1e-6);
+  mj_deleteData(data);
+  mj_deleteModel(model);
+}
+
+TEST_F(MjGjkTest, CapsuleAxisInsideEllipsoid) {
+  static constexpr char xml[] = R"(
+  <mujoco>
+    <compiler angle="degree"/>
+    <worldbody>
+      <geom type="ellipsoid" size=".15 .03 .05"/>
+      <body pos="0 .005 0" euler="0 60 0">
+        <freejoint/>
+        <geom type="capsule" size=".01 .1"/>
+      </body>
+    </worldbody>
+  </mujoco>)";
+  ExpectCapsuleEllipsoidDist(xml, -0.035);
+}
+
+TEST_F(MjGjkTest, CapsuleAxisInsideEllipsoidNoContact) {
+  static constexpr char xml[] = R"(
+  <mujoco>
+    <compiler angle="degree"/>
+    <worldbody>
+      <geom type="ellipsoid" size=".15 .03 .05"/>
+      <body pos="0 .005 0" euler="10 20 30">
+        <freejoint/>
+        <geom type="capsule" size=".01 .1"/>
+      </body>
+    </worldbody>
+  </mujoco>)";
+  ExpectCapsuleEllipsoidDist(xml, -0.035860711);
+}
+
 TEST_F(MjGjkTest, CylinderBoxMargin) {
   static constexpr char xml[] = R"(
   <mujoco>
