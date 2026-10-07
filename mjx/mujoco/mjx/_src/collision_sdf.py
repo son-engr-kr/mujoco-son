@@ -332,11 +332,82 @@ def capsule_cylinder(ca: GeomInfo, cy: GeomInfo) -> Collision:
   return jax.vmap(optim_)(x0)
 
 
+def _support_gap(
+    u: jax.Array, dpos: jax.Array, a1: jax.Array, a2: jax.Array
+) -> Tuple[jax.Array, jax.Array, jax.Array]:
+  """Returns the gap between two ellipsoids along u, and their support radii.
+
+  With M = mat @ diag(size**2) @ mat.T, an ellipsoid's support function is
+  pos . u + sqrt(u . M u), so the separation of the two along u is
+  dpos . u - sqrt(u . a1 u) - sqrt(u . a2 u), dpos the vector between centers.
+
+  Args:
+    u: unit direction from the first ellipsoid to the second
+    dpos: second center minus first
+    a1: first ellipsoid's mat @ diag(size**2) @ mat.T
+    a2: same for the second
+
+  Returns:
+    gap, support radii of both
+  """
+  n1, n2 = jp.sqrt(u @ a1 @ u), jp.sqrt(u @ a2 @ u)
+  return u @ dpos - n1 - n2, n1, n2
+
+
 @collider(ncon=1)
 def ellipsoid_ellipsoid(e1: GeomInfo, e2: GeomInfo) -> Collision:
-  """Calculates contact between two ellipsoids."""
-  x0 = 0.5 * (e1.pos + e2.pos)
-  return _optim(_ellipsoid, _ellipsoid, e1, e2, x0)
+  """Calculates contact between two ellipsoids.
+
+  The signed distance of two convex sets is the largest gap over directions,
+  max |u| = 1 of the support gap: the distance when they are apart, and minus
+  the penetration depth (the EPA's minimum translation) when they overlap. The
+  gap is concave in u; on the sphere, Newton's method with its tangent Hessian
+  shifted to be negative definite, and a short backtracking, finds a local
+  maximum from each of seven starts: the line between the centers and the
+  principal axes of both ellipsoids. The best of them is taken.
+  """
+  dpos = e2.pos - e1.pos
+  a1 = e1.mat @ jp.diag(e1.size * e1.size) @ e1.mat.T
+  a2 = e2.mat @ jp.diag(e2.size * e2.size) @ e2.mat.T
+
+  def newton_step(u):
+    gap, n1, n2 = _support_gap(u, dpos, a1, a2)
+    s1, s2 = a1 @ u, a2 @ u
+    grad = dpos - s1 / n1 - s2 / n2
+    hess = jp.outer(s1, s1) / n1**3 - a1 / n1 + jp.outer(s2, s2) / n2**3 - a2 / n2
+    t = jp.stack(math.orthogonals(u), axis=1)
+    # tangent gradient and Hessian on the sphere; u . grad = gap
+    grad_t = t.T @ grad
+    hess_t = t.T @ hess @ t - gap * jp.eye(2)
+    tr = jp.trace(hess_t)
+    det = jp.linalg.det(hess_t)
+    lmax = 0.5 * tr + jp.sqrt(jp.maximum(0.25 * tr * tr - det, 0.0))
+    shift = jp.maximum(lmax + 1e-3 * (jp.abs(tr) + jp.abs(gap)), 0.0)
+    return t @ jp.linalg.solve(hess_t - shift * jp.eye(2), -grad_t)
+
+  def ascend(u, _):
+    # keep the best of a few step lengths, staying put included
+    step = newton_step(u)
+    alpha = jp.array([1.0, 0.5, 0.25, 0.125, 0.0])
+    u_new = jax.vmap(lambda a: math.normalize(u + a * step))(alpha)
+    gap_new = jax.vmap(lambda v: _support_gap(v, dpos, a1, a2)[0])(u_new)
+    return u_new[jp.argmax(gap_new)], None
+
+  axes = jp.concatenate([e1.mat.T, e2.mat.T])
+  axes = axes * jp.where(axes @ dpos < 0, -1.0, 1.0)[:, None]
+  center = jp.where(jp.any(dpos), math.normalize(dpos), axes[0])
+  starts = jp.concatenate([center[None], axes])
+  u = jax.vmap(lambda u: jax.lax.scan(ascend, u, None, length=8)[0])(starts)
+  gap = jax.vmap(lambda u: _support_gap(u, dpos, a1, a2)[0])(u)
+  u = u[jp.argmax(gap)]
+  # the gap is flat at its maximum, so comparing gaps stops early in float32;
+  # full Newton steps from there follow the gradient instead
+  for _ in range(2):
+    u = math.normalize(u + newton_step(u))
+  dist, n1, n2 = _support_gap(u, dpos, a1, a2)
+  # midpoint of the support points of the first along u and the second along -u
+  pos = 0.5 * (e1.pos + a1 @ u / n1 + e2.pos - a2 @ u / n2)
+  return dist, pos, math.make_frame(u)
 
 
 @collider(ncon=1)

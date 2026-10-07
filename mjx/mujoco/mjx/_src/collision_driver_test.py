@@ -250,6 +250,67 @@ class EllipsoidCollisionTest(parameterized.TestCase):
           dx._impl.contact, d.contact, field.name, 'ellipsoid-ellipsoid', 1e-2
       )
 
+  _ELLIPSOID_PAIR = """
+    <mujoco>
+      <worldbody>
+        <body>
+          <freejoint/>
+          <geom type="ellipsoid" size=".085 .035 .04"/>
+        </body>
+        <body>
+          <freejoint/>
+          <geom type="ellipsoid" size=".06 .03 .025"/>
+        </body>
+      </worldbody>
+    </mujoco>
+  """
+
+  def test_ellipsoid_ellipsoid_random_poses(self):
+    """Tests ellipsoid ellipsoid contacts at random poses."""
+    m = mujoco.MjModel.from_xml_string(self._ELLIPSOID_PAIR)
+    d = mujoco.MjData(m)
+    mx = mjx.put_model(m)
+    collide = jax.jit(lambda m, d: mjx.collision(m, mjx.kinematics(m, d)))
+    rng = np.random.default_rng(0)
+    dirs = rng.normal(size=(2000, 3))
+    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+    ntest = 0
+    while ntest < 20:
+      quat1, quat2 = rng.normal(size=(2, 4))
+      d.qpos = np.concatenate([
+          np.zeros(3),
+          quat1 / np.linalg.norm(quat1),
+          rng.uniform(-0.12, 0.12, 3),
+          quat2 / np.linalg.norm(quat2),
+      ])
+      mujoco.mj_forward(m, d)
+      if d.ncon != 1:
+        continue
+      ntest += 1
+      contact = collide(mx, mjx.put_data(m, d))._impl.contact
+      # C's EPA gets the distance to about 1e-6 here, but its contact position
+      # and normal only to about 1e-4 and 2e-2
+      np.testing.assert_allclose(contact.dist, d.contact.dist, atol=1e-5)
+      # the distance is the largest support gap over directions, attained
+      # along the normal, whose support points the position is the middle of
+      a = [
+          d.geom_xmat[i].reshape(3, 3)
+          @ np.diag(m.geom_size[i] ** 2)
+          @ d.geom_xmat[i].reshape(3, 3).T
+          for i in range(2)
+      ]
+      dpos = d.geom_xpos[1] - d.geom_xpos[0]
+      gap = lambda u: (
+          u @ dpos - np.sqrt(u @ a[0] @ u) - np.sqrt(u @ a[1] @ u)
+      )
+      normal = np.asarray(contact.frame[0, 0], dtype=float)
+      self.assertLessEqual(max(gap(u) for u in dirs), contact.dist[0] + 1e-7)
+      np.testing.assert_allclose(gap(normal), contact.dist[0], atol=1e-7)
+      x1 = d.geom_xpos[0] + a[0] @ normal / np.sqrt(normal @ a[0] @ normal)
+      x2 = d.geom_xpos[1] - a[1] @ normal / np.sqrt(normal @ a[1] @ normal)
+      np.testing.assert_allclose(contact.pos[0], 0.5 * (x1 + x2), atol=1e-7)
+      np.testing.assert_allclose(x2 - x1, contact.dist[0] * normal, atol=1e-6)
+
   _ELLIPSOID_SPHERE = """
     <mujoco>
       <worldbody>
