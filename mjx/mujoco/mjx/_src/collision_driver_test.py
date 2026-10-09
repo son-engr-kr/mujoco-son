@@ -569,6 +569,46 @@ class CapsuleCollisionTest(parameterized.TestCase):
     </mujoco>
   """
 
+  _CAP_TILTED_PLANE = """
+    <mujoco>
+      <worldbody>
+        <geom type="plane" size="5 5 .1" euler="20 -15 0"/>
+        <body>
+          <freejoint/>
+          <geom type="capsule" size=".02 .05"/>
+        </body>
+      </worldbody>
+    </mujoco>
+  """
+
+  def test_plane_capsule_frame(self):
+    """Tests the plane capsule contact frame at all tilts against C."""
+    # C projects the capsule axis onto the plane for the first tangent however
+    # short the projection, which steers a pyramidal cone's friction directions
+    m = mujoco.MjModel.from_xml_string(self._CAP_TILTED_PLANE)
+    d = mujoco.MjData(m)
+    mx = mjx.put_model(m)
+    collide = jax.jit(lambda m, d: mjx.collision(m, mjx.kinematics(m, d)))
+    normal = d.geom_xmat[0].reshape(3, 3)[:, 2]
+    rng = np.random.default_rng(0)
+    # random axes, and one along the normal, whose tangent C sets to (1, 0, 0)
+    axes = [normal] + [a / np.linalg.norm(a) for a in rng.normal(size=(30, 3))]
+    for axis in axes:
+      quat = np.zeros(4)
+      mujoco.mju_quatZ2Vec(quat, axis)
+      # the lower end 1 mm into the plane
+      height = 0.05 * abs(axis @ normal) + 0.02 - 0.001
+      d.qpos[:7] = [*(normal * height), *quat]
+      mujoco.mj_forward(m, d)
+      contact = collide(mx, mjx.put_data(m, d))._impl.contact
+      active = np.asarray(contact.dist) < 0
+      self.assertEqual(active.sum(), d.ncon)
+      np.testing.assert_allclose(
+          contact.frame[active].reshape(-1, 9),
+          d.contact.frame[: d.ncon],
+          atol=1e-6,
+      )
+
   def test_parallel_capsules(self):
     """Tests that two parallel capsules are colliding at the midpoint."""
     _, dx = _collide(self._PARALLEL_CAP)
