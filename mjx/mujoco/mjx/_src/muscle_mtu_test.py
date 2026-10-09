@@ -51,6 +51,7 @@ def _hanging(gain: str, prm: str, extra: str = '') -> str:
 
 _MECH = '3000 0.15 0.15 10 0.15 0.1'  # kDefaultPrm: F_max l_opt l_slack v_max phi beta
 _SONG = '4000 0.04 0.26 6 0.56 -2.995732273553991 1.5 5 0.04'  # kSol
+_SOLEUS = '6194.84 0.044 0.28135 10 0.381429 0.1'
 
 
 def _rigid_flag(mech: str) -> str:
@@ -546,6 +547,47 @@ class MtuTest(parameterized.TestCase):
     _assert_close(d.qpos, dx.qpos, 'qpos', 1e-3, 1e-4)
     _assert_close(d.act, dx.act, 'act', 1e-3, 1e-4)
     _assert_close(d.muscle_F_mtu, _muscle(dx, 'muscle_F_mtu'), 'F', 1e-3, 1.0)
+
+  @parameterized.parameters('millard_mtu', 'hyfydy_mtu')
+  def test_float32_newton_settles(self, gain):
+    """In single precision the fiber Newton settles short of its tolerance.
+
+    Its residual stops falling at its rounding, above the default tol; the
+    iterate must then stay put rather than wander for the rest of the loop.
+    """
+    # myoLeg's soleus: a short fiber on a long tendon
+    m = mujoco.MjModel.from_xml_string(_hanging(gain, _SOLEUS))
+    d = mujoco.MjData(m)
+    mx = mjx.put_model(m)
+    p = muscle_mtu._mtu_params(mx.actuator_gainprm, hyfydy=gain == 'hyfydy_mtu')
+    curves = muscle_mtu._curves(mx, mx.actuator_gaintype[0], np.array([0]))
+    dtv = m.opt.timestep * p.v_max_ms
+
+    @jax.jit
+    def newton(l_ce, l_mtu, a):
+      run = lambda n: muscle_mtu._mtu_newton(curves, p, l_ce, l_mtu, a, dtv, n)
+      x = run(20)
+      e = muscle_mtu._mtu_eval(curves, p, x, l_mtu, l_ce, a, dtv)
+      return x, run(40), e.R
+
+    rng = np.random.default_rng(0)
+    above_tol = 0
+    for trial in range(40):
+      self._random_state(m, d, rng)
+      d.act[0] *= 1 + 0.05 * rng.standard_normal()
+      d.act[1] = rng.uniform(0.2, 1)
+      mujoco.mj_forward(m, d)
+      a = np.clip(d.act[1:], float(p.min_act[0]), 1).astype(np.float32)
+      x, x_later, r = newton(
+          jp.asarray(d.act[:1], jp.float32),
+          jp.asarray(d.actuator_length, jp.float32),
+          jp.asarray(a),
+      )
+      above_tol += int(np.abs(r[0]) >= p.tol[0])
+      np.testing.assert_array_equal(x, x_later, err_msg=f'trial {trial}')
+      # C's fiber, to the precision a single-precision length can carry
+      _assert_close(d.muscle_l_ce, x, f'l_ce {trial}', 1e-6, 0)
+    self.assertGreater(above_tol, 20)
 
   def test_path_shorter_than_the_guards(self):
     """A path under 2e-6 l_opt puts Song's lower guard above its upper one.

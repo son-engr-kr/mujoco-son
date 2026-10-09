@@ -18,9 +18,11 @@ A port of src/engine/engine_muscle_mtu.c (millard_mtu, hyfydy_mtu) and of the
 compliant_mtu section of src/engine/engine_util_misc.c. The C sources carry the
 derivations and the reasons behind every rule. This file keeps their structure
 function for function, so the two read side by side, and comments only where
-JAX forces a difference. There are three, and a fourth in single precision,
-where the rigid tendon's buckling margin is taken at the simulated precision
-(_significant_real):
+JAX forces a difference. There are three, and two more in single precision:
+the rigid tendon's buckling margin is taken at the simulated precision
+(_significant_real), and the fiber Newton also stops once its step is down to
+the rounding of the lengths, as its residual cannot reach the tolerance there
+(_mtu_newton):
 
   * Every loop runs a fixed trip count. An element that has converged is frozen
     with jp.where, so it ends on exactly the value the C loop breaks with, and
@@ -424,14 +426,19 @@ def _mtu_newton(
 ) -> jax.Array:
   """mtuSolve: Newton on R(l_ce) = 0, warm-started at l_ce."""
   max_step = 0.5 * p.l_opt
+  eps = jp.finfo(l_ce.dtype).eps
 
   def body(_, carry):
     x, done = carry
     e = _mtu_eval(curves, p, x, l_mtu, l_ce, a, dtv)
     done = done | (jp.abs(e.R) < p.tol) | (e.dR == 0)
     step = jp.clip(-e.R / jp.where(e.dR == 0, 1, e.dR), -max_step, max_step)
+    # in single precision R stops falling near 1e-6, short of the default tol,
+    # where the step is the size of the rounding of the lengths R is computed
+    # from: that step is still taken, and is the last
+    resolved = jp.abs(step) <= eps * (jp.abs(l_mtu) + jp.abs(x))
     x = jp.where(done, x, jp.maximum(x + step, p.lce_min))
-    return x, done
+    return x, done | resolved
 
   x = jp.maximum(l_ce, p.lce_min)
   x, _ = jax.lax.fori_loop(0, niter, body, (x, jp.zeros(x.shape, bool)))
