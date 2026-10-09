@@ -600,7 +600,7 @@ class ModelJAX(PyTreeNode):
   wrap_inside_z_init: float
   is_wrap_inside: np.ndarray
   # baked Millard2012 curve tables, one row per distinct curve (see muscle_mtu)
-  mtu_curve_knot: jax.Array
+  mtu_curve_cell: jax.Array
   mtu_curve_meta: jax.Array
   actuator_mtu_curve: np.ndarray
 

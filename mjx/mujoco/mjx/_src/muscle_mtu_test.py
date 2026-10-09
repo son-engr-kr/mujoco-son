@@ -285,7 +285,7 @@ class MtuTest(parameterized.TestCase):
     self.assertEqual(curve[ids['millard']][0], curve[ids['millard_shape']][0])
     self.assertTrue((curve[ids['compliant']] == -1).all())
     self.assertTrue((curve[ids['hyfydy_early']] == -1).all())
-    self.assertEqual(fields['mtu_curve_knot'].shape[0], 5)
+    self.assertEqual(fields['mtu_curve_cell'].shape[0], 5)
 
   @parameterized.named_parameters(*[(k, *v) for k, v in _HANGING.items()])
   def test_equilibrate(self, gain, prm):
@@ -383,7 +383,7 @@ class MtuTest(parameterized.TestCase):
           x = np.linspace(lo, hi, 997)
           tid = np.full(x.shape, fields['actuator_mtu_curve'][i, c])
           y, dy = muscle_mtu._table_eval(
-              jp.asarray(fields['mtu_curve_knot']),
+              jp.asarray(fields['mtu_curve_cell']),
               jp.asarray(fields['mtu_curve_meta']), tid, jp.asarray(x))
           want = np.zeros((2, x.size))
           for k, xk in enumerate(x):
@@ -392,6 +392,43 @@ class MtuTest(parameterized.TestCase):
             want[1, k] = deriv[0]
           _assert_close(want[0], y, f'curve {c} of {i}', 1e-12, 1e-13)
           _assert_close(want[1], dy, f'slope {c} of {i}', 1e-10, 1e-11)
+
+  def test_millard_tables_float32_at_knots(self):
+    """Single-precision tables hold their value next to a knot.
+
+    The abscissa is formed inside the program, as mtuEval forms the strain.
+    XLA then computes the cell coordinate in more than one fusion, and the
+    copies fell on either side of a knot: the result was off by a cell's rise.
+    """
+    m = mujoco.MjModel.from_xml_string(_hanging('millard_mtu', _SOLEUS))
+    fields = muscle_mtu.model_fields(m)
+    cell, meta = fields['mtu_curve_cell'], fields['mtu_curve_meta']
+    l_slack = np.float32(m.actuator_gainprm[0, 2])
+    for c in range(4):
+      tid = fields['actuator_mtu_curve'][:1, c]
+      x0, dx = meta[tid[0], 0], meta[tid[0], 2]
+      # lengths within 30 float32 steps of every fifth knot
+      knot = x0 + dx * np.arange(1, cell.shape[1], 5)
+      base = (knot * l_slack).astype(np.float32)
+      steps = np.arange(-30, 31)[None] * np.spacing(base)[:, None]
+      length = (base[:, None] + steps).astype(np.float32).ravel()
+
+      @jax.jit
+      @jax.vmap
+      def read(v, tid=tid):
+        x = v[None] / jp.float32(l_slack)
+        y, _ = muscle_mtu._table_eval(
+            jp.asarray(cell, jp.float32), jp.asarray(meta, jp.float32), tid, x
+        )
+        return y[0]
+
+      got = read(jp.asarray(length))
+      with enable_x64():
+        x = jp.asarray(length, jp.float64) / l_slack
+        want, _ = muscle_mtu._table_eval(
+            jp.asarray(cell), jp.asarray(meta), tid, x
+        )
+      _assert_close(np.asarray(want), got, f'curve {c}', 0, 1e-5)
 
   def test_hyfydy_curves(self):
     fns = (muscle_mtu._hyfydy_fl, muscle_mtu._hyfydy_fp,

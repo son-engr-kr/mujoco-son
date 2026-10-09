@@ -152,13 +152,21 @@ def _stop(tree):
 # ------------------------------ Millard2012 curve table ------------------------------
 
 
+def _cells(knot: np.ndarray) -> np.ndarray:
+  """(ntable, n, 3) knots as (ntable, n - 1, 7) cells: both knots, the index."""
+  ntable, n, _ = knot.shape
+  index = np.broadcast_to(np.arange(n - 1, dtype=knot.dtype), (ntable, n - 1))
+  return np.concatenate([knot[:, :-1], knot[:, 1:], index[..., None]], axis=2)
+
+
 def _table_eval(
-    knot: jax.Array, meta: jax.Array, tid: np.ndarray, x: jax.Array
+    cell: jax.Array, meta: jax.Array, tid: np.ndarray, x: jax.Array
 ) -> Tuple[jax.Array, jax.Array]:
   """mju_curveTableEval, for one curve of each actuator in a group.
 
   Args:
-    knot: (ntable, n, 3) knots, (y, dy/dx, d2y/dx2)
+    cell: (ntable, n - 1, 7) cells, the (y, dy/dx, d2y/dx2) knots at both ends
+      and the cell's index (_cells)
     meta: (ntable, 8) x0, x1, dx, inv_dx, a_y0, a_d0, a_y1, a_d1
     tid: (k,) table row of each actuator
     x: (k,) abscissa
@@ -169,21 +177,26 @@ def _table_eval(
   mt = meta[tid]
   x0, x1, dx, inv_dx = mt[:, 0], mt[:, 1], mt[:, 2], mt[:, 3]
   a_y0, a_d0, a_y1, a_d1 = mt[:, 4], mt[:, 5], mt[:, 6], mt[:, 7]
-  n = knot.shape[1]
+  n = cell.shape[1] + 1
 
   # the interior formula is evaluated outside [x0, x1] too, so s is bounded to
   # keep it finite there; inside, s < n - 1 + roundoff and the bound never binds
   s = jp.clip((x - x0) * inv_dx, 0, n)
   i = jp.minimum(jp.floor(s).astype(jp.int32), n - 2)
-  u = s - i
+  # XLA computes s anew in each fusion that reads it, some with fused
+  # multiply-adds, and in single precision the copies can fall on either side
+  # of a knot: the knots of one cell were then read at the position in the
+  # next, a cell's rise off. One gather fetches a cell's knots and its index,
+  # and the position is taken against that index, so they always agree.
+  c = cell[tid, i]
+  u = s - c[:, 6]
   u2 = u * u
   u3 = u2 * u
   u4 = u3 * u
   u5 = u4 * u
   h = dx
-  k_i, k_j = knot[tid, i], knot[tid, i + 1]
-  y_i, d_i, e_i = k_i[:, 0], k_i[:, 1], k_i[:, 2]
-  y_j, d_j, e_j = k_j[:, 0], k_j[:, 1], k_j[:, 2]
+  y_i, d_i, e_i = c[:, 0], c[:, 1], c[:, 2]
+  y_j, d_j, e_j = c[:, 3], c[:, 4], c[:, 5]
 
   # quintic Hermite basis on the unit cell
   h0 = 1 - 10 * u3 + 15 * u4 - 6 * u5
@@ -275,21 +288,21 @@ class _Curves:
       self,
       hyfydy: bool,
       tid: np.ndarray = None,
-      knot: jax.Array = None,
+      cell: jax.Array = None,
       meta: jax.Array = None,
   ):
     self.hyfydy = hyfydy
     self.tid = tid  # (k, 4), row of each actuator's table for each curve
-    self.knot = knot
+    self.cell = cell
     self.meta = meta
 
   def stop_gradient(self) -> '_Curves':
     if self.hyfydy:
       return self
-    return _Curves(False, self.tid, *_stop((self.knot, self.meta)))
+    return _Curves(False, self.tid, *_stop((self.cell, self.meta)))
 
   def _table(self, curve: int, x: jax.Array) -> Tuple[jax.Array, jax.Array]:
-    return _table_eval(self.knot, self.meta, self.tid[:, curve], x)
+    return _table_eval(self.cell, self.meta, self.tid[:, curve], x)
 
   def active(self, l0):
     return _hyfydy_fl(l0) if self.hyfydy else self._table(_ACTIVE_FL, l0)
@@ -1003,7 +1016,7 @@ def _curves(m: Model, gain: GainType, ids: np.ndarray) -> _Curves:
     return _Curves(hyfydy=True)
   impl = m._impl  # pytype: disable=attribute-error
   return _Curves(
-      False, impl.actuator_mtu_curve[ids], impl.mtu_curve_knot, impl.mtu_curve_meta
+      False, impl.actuator_mtu_curve[ids], impl.mtu_curve_cell, impl.mtu_curve_meta
   )
 
 
@@ -1329,7 +1342,7 @@ def model_fields(m: mujoco.MjModel) -> Dict[str, np.ndarray]:
     m: the model
 
   Returns:
-    mtu_curve_knot, mtu_curve_meta and actuator_mtu_curve
+    mtu_curve_cell, mtu_curve_meta and actuator_mtu_curve
   """
   groups = _groups(m)
   if groups and not hasattr(m.opt, 'cmtu_iter'):
@@ -1354,7 +1367,7 @@ def model_fields(m: mujoco.MjModel) -> Dict[str, np.ndarray]:
   d = mujoco.MjData(m) if groups else None
   knot, meta, curve = _bake_curves(m, d, millard)
   return {
-      'mtu_curve_knot': knot,
+      'mtu_curve_cell': _cells(knot),
       'mtu_curve_meta': meta,
       'actuator_mtu_curve': curve,
   }
