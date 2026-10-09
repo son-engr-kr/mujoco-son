@@ -317,6 +317,58 @@ class TendonTest(parameterized.TestCase):
     _assert_eq(d.wrap_obj, dx._impl.wrap_obj, 'wrap_obj')
     _assert_eq(d.wrap_xpos, dx._impl.wrap_xpos, 'wrap_xpos')
 
+  @parameterized.parameters('cylinder', 'sphere')
+  def test_tendon_grazing_wrap(self, geom_type):
+    """Tests a spatial tendon that grazes its wrap geom, in single precision."""
+    # the path's projection passes the geom 1e-5 of its radius away, where the
+    # correct wrap has a nearly zero arc: its two tangent lines are nearly
+    # parallel, and rounding used to make them cross and pick the far side
+    geom = {
+        'cylinder': 'type="cylinder" size=".04 .1"',
+        'sphere': 'type="sphere" size=".04"',
+    }[geom_type]
+    m = mujoco.MjModel.from_xml_string(f"""
+      <mujoco>
+        <worldbody>
+          <body>
+            <joint type="slide"/>
+            <geom name="wrap" {geom} contype="0" conaffinity="0"/>
+            <site name="p1"/>
+            <site name="p2"/>
+            <site name="side"/>
+          </body>
+        </worldbody>
+        <tendon>
+          <spatial>
+            <site site="p1"/>
+            <geom geom="wrap" sidesite="side"/>
+            <site site="p2"/>
+          </spatial>
+        </tendon>
+      </mujoco>
+    """)
+    m.site_sameframe[:] = 0  # the site positions are set below
+    d = mujoco.MjData(m)
+    forward = jax.jit(mjx.forward)
+    rng = np.random.default_rng(0)
+    for _ in range(100):
+      u = rng.normal(size=3)
+      if geom_type == 'cylinder':
+        u[2] *= 0.1
+        w = np.cross(u, [0, 0, 1])
+      else:
+        w = np.cross(u, rng.normal(size=3))
+      u, w = u / np.linalg.norm(u), w / np.linalg.norm(w)
+      closest = w * 0.04 * (1 + rng.normal(scale=1e-5))
+      m.site_pos[0] = closest - u * rng.uniform(0.05, 0.3)
+      m.site_pos[1] = closest + u * rng.uniform(0.05, 0.3)
+      m.site_pos[2] = w * 0.08
+      mujoco.mj_forward(m, d)
+      dx = forward(mjx.put_model(m), mjx.put_data(m, d))
+      np.testing.assert_allclose(
+          dx._impl.ten_length, d.ten_length, atol=1e-4
+      )
+
   def test_tendon_armature(self):
     """Tests MJX tendon armature matches MuJoCo."""
     m = mujoco.MjModel.from_xml_string("""

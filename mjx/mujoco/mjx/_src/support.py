@@ -679,10 +679,18 @@ def _is_intersect(
       (p2[0] - p1[0]) * (p1[1] - p3[1]) - (p2[1] - p1[1]) * (p1[0] - p3[0])
   ) / det
 
+  # a wrap whose arc is nearly zero has its two tangent lines nearly parallel,
+  # meeting just past the tangent points p2 and p4 (a, b slightly above 1);
+  # there the rounding error of a and b, about eps * scale * (len1 + len2) /
+  # |det|, can exceed that margin, so a crossing within it does not count
+  scale = jp.max(jp.abs(jp.array([p1, p2, p3, p4])))
+  length = math.norm(p2 - p1) + math.norm(p4 - p3)
+  tol = 4 * jp.finfo(det.dtype).eps * scale * length / jp.abs(det)
+
   return jp.where(
       jp.abs(det) < mujoco.mjMINVAL,
       0,
-      (a >= 0) & (a <= 1) & (b >= 0) & (b <= 1),
+      (a >= 0) & (a <= 1 - tol) & (b >= 0) & (b <= 1 - tol),
   )
 
 
