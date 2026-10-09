@@ -133,6 +133,40 @@ class SolverTest(parameterized.TestCase):
     nnz = dx._impl.efc_J.any(axis=1)
     _assert_eq(d.efc_force, dx._impl.efc_force[nnz], 'efc_force')
 
+  def test_linesearch_unresolved_cost(self):
+    """The line search moves when its cost cannot resolve the decrease."""
+    # near convergence the decrease along the search falls below the cost's
+    # rounding; adding a constant to the cost reproduces that, and the step
+    # must not change, since the derivatives along the search do not
+    m = test_util.load_test_file('constraints.xml')
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    mx, dx = mjx.put_model(m), mjx.put_data(m, d)
+    dx = dx.replace(qacc=dx.qacc_smooth)
+    ctx = solver.Context.create(mx, dx)
+
+    def step(offset):
+      c = ctx.replace(gauss=ctx.gauss + offset)
+      return solver._linesearch(mx, dx, c).qacc
+
+    linesearch = jax.jit(step)
+    qacc = linesearch(0.0)
+    self.assertGreater(np.abs(qacc - ctx.qacc).max(), 1e-3)
+    offset = 1e20 * (np.abs(ctx.cost) + 1)
+    np.testing.assert_allclose(linesearch(offset), qacc, rtol=1e-6)
+
+  def test_solver_niter(self):
+    """Tests that solve reports its iteration count."""
+    m = test_util.load_test_file('constraints.xml')
+    m.opt.iterations = 50
+    m.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_WARMSTART
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    self.assertGreater(d.solver_niter[0], 1)
+    dx = mjx.put_data(m, d).tree_replace({'_impl.solver_niter': 0})
+    dx = jax.jit(mjx.forward)(mjx.put_model(m), dx)
+    self.assertGreater(int(dx._impl.solver_niter), 1)
+
   def test_quad_frictionloss(self):
     """Test a case with quadratic frictionloss constraints."""
     m = test_util.load_test_file('quadratic_frictionloss.xml')

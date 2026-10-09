@@ -539,10 +539,15 @@ def _linesearch(m: Model, d: Data, ctx: Context) -> Context:
   ls_ctx = _LSContext(lo=lo, hi=hi, swap=jp.array(True), ls_iter=0)
   ls_ctx = _while_loop_scan(cond, body, ls_ctx, m.opt.ls_iterations)
 
-  # move to new solution if improved
+  # move to new solution if improved; a point whose cost ties p0's still counts
+  # when it is nearer the minimum, as CGsearch keeps its Newton point unless p0
+  # costs strictly less: near convergence the cost no longer resolves the step
   lo, hi = ls_ctx.lo, ls_ctx.hi
-  improved = (lo.cost < p0.cost) | (hi.cost < p0.cost)
-  alpha = jp.where(lo.cost < hi.cost, lo.alpha, hi.alpha)
+  nearer = lambda x, y: (x.cost < y.cost) | (
+      (x.cost == y.cost) & (jp.abs(x.deriv_0) < jp.abs(y.deriv_0))
+  )
+  alpha = jp.where(nearer(lo, hi), lo.alpha, hi.alpha)
+  improved = nearer(lo, p0) | nearer(hi, p0)
   qacc = ctx.qacc + improved * ctx.search * alpha
   ma = ctx.Ma + improved * mv * alpha
   jaref = ctx.Jaref + improved * jv * alpha
@@ -664,11 +669,13 @@ def _solve(m: Model, d: Data) -> Data:
   else:
     ctx = jax.lax.while_loop(cond, body, ctx)
 
+  niter = d._impl.solver_niter
   d = d.tree_replace({
       'qacc_warmstart': ctx.qacc,
       'qfrc_constraint': ctx.qfrc_constraint,
       'qacc': ctx.qacc,
       '_impl.efc_force': ctx.efc_force,
+      '_impl.solver_niter': jp.asarray(ctx.solver_niter, niter.dtype),
   })
 
   return d
