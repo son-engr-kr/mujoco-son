@@ -609,8 +609,9 @@ def solve(m: Model, d: Data) -> Data:
   jax_enable_x64 stays off: the solve enables it locally, so nothing outside it
   can become f64.
 
-  The widened solve differentiates exactly as the plain one does, which is in
-  reverse mode only when opt.iterations is 1; it does not support forward mode.
+  Reverse mode needs a fixed iteration count: opt.iterations of 1, or
+  opt.tolerance of 0, which runs all opt.iterations. The widened solve
+  differentiates as the plain one does there; it does not support forward mode.
 
   Args:
     m: the model
@@ -666,6 +667,12 @@ def _solve(m: Model, d: Data) -> Data:
   ctx = Context.create(m, d)
   if m.opt.iterations == 1:
     ctx = body(ctx)
+  elif m.opt.tolerance == 0:
+    # a zero tolerance leaves the iteration cap as the only exit, where C also
+    # stops at a line search that cannot move (a fixed point for Newton);
+    # scanned, those iterations support reverse mode, which a while_loop does
+    # not (google-deepmind/mujoco#2259)
+    ctx = _while_loop_scan(cond, body, ctx, m.opt.iterations)
   else:
     ctx = jax.lax.while_loop(cond, body, ctx)
 

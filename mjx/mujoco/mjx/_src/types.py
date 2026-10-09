@@ -475,7 +475,7 @@ class Option(PyTreeNode):
   """Physics options."""  # fmt: skip
   timestep: jax.Array
   impratio: jax.Array
-  tolerance: jax.Array
+  tolerance: float  # static: zero selects a fixed-iteration solve
   ls_tolerance: jax.Array
   gravity: jax.Array
   wind: jax.Array

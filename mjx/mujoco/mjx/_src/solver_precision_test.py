@@ -171,6 +171,37 @@ class SolverPrecisionTest(parameterized.TestCase):
       )
     np.testing.assert_allclose(g_mix, g_64, rtol=1e-3, atol=1e-4)
 
+  def test_gradient_with_fixed_iterations(self):
+    """With opt.tolerance 0, reverse mode goes through several iterations."""
+    m = mujoco.MjModel.from_xml_string(_COUPLED)
+    m.opt.iterations = 5
+    m.opt.tolerance = 0
+    dx = mjx.put_data(m, mujoco.MjData(m))
+
+    def height(mx, ctrl):
+      return jp.sum(mjx.step(mx, dx.replace(ctrl=ctrl)).qvel)
+
+    ctrl = jp.full(m.nu, 0.3, dtype=jp.float32)
+    g_mix = jax.jit(jax.grad(height, argnums=1))(
+        mjx.put_model(m, solver_dtype=jp.float64), ctrl
+    )
+    self.assertEqual(g_mix.dtype, jp.float32)
+    with enable_x64():
+      mx = mjx.put_model(m)
+      ctrl64 = jp.asarray(ctrl, dtype=jp.float64)
+      g_64 = jax.jit(jax.grad(height, argnums=1))(mx, ctrl64)
+      # the gradient of the same five iterations, by central differences
+      f = jax.jit(height)
+      h = 1e-6
+      g_fd = np.array([
+          (f(mx, ctrl64.at[i].add(h)) - f(mx, ctrl64.at[i].add(-h))) / (2 * h)
+          for i in range(m.nu)
+      ])
+    np.testing.assert_allclose(g_64, g_fd, rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(g_mix, g_64, rtol=1e-3, atol=1e-4)
+    dx_mix = jax.jit(mjx.step)(mjx.put_model(m, solver_dtype=jp.float64), dx)
+    self.assertEqual(int(dx_mix._impl.solver_niter), m.opt.iterations)
+
   def test_vmap(self):
     m = mujoco.MjModel.from_xml_string(_COUPLED)
     mx = mjx.put_model(m, solver_dtype=jp.float64)
