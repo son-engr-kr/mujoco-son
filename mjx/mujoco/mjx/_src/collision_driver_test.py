@@ -591,9 +591,8 @@ class CapsuleCollisionTest(parameterized.TestCase):
     collide = jax.jit(lambda m, d: mjx.collision(m, mjx.kinematics(m, d)))
     normal = d.geom_xmat[0].reshape(3, 3)[:, 2]
     rng = np.random.default_rng(0)
-    # random axes, and one along the normal, whose tangent C sets to (1, 0, 0)
-    axes = [normal] + [a / np.linalg.norm(a) for a in rng.normal(size=(30, 3))]
-    for axis in axes:
+
+    def frames(axis):
       quat = np.zeros(4)
       mujoco.mju_quatZ2Vec(quat, axis)
       # the lower end 1 mm into the plane
@@ -603,11 +602,23 @@ class CapsuleCollisionTest(parameterized.TestCase):
       contact = collide(mx, mjx.put_data(m, d))._impl.contact
       active = np.asarray(contact.dist) < 0
       self.assertEqual(active.sum(), d.ncon)
+      return np.asarray(contact.frame[active])
+
+    for axis in rng.normal(size=(30, 3)):
+      frame = frames(axis / np.linalg.norm(axis))
       np.testing.assert_allclose(
-          contact.frame[active].reshape(-1, 9),
-          d.contact.frame[: d.ncon],
-          atol=1e-6,
+          frame.reshape(-1, 9), d.contact.frame[: d.ncon], atol=1e-6
       )
+
+    # along the normal and within rounding of it, C's tangent is (1, 0, 0),
+    # unprojected, or the direction of a rounding error; the frame stays
+    # orthonormal in single precision
+    tangent = np.cross(normal, rng.normal(size=3))
+    tangent /= np.linalg.norm(tangent)
+    for angle in (0, 1e-7, 1e-5):
+      axis = np.cos(angle) * normal + np.sin(angle) * tangent
+      for frame in frames(axis):
+        np.testing.assert_allclose(frame @ frame.T, np.eye(3), atol=1e-6)
 
   def test_parallel_capsules(self):
     """Tests that two parallel capsules are colliding at the midpoint."""

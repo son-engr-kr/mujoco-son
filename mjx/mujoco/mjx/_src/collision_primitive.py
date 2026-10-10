@@ -71,11 +71,11 @@ def plane_sphere(plane: GeomInfo, sphere: GeomInfo) -> Collision:
 def plane_capsule(plane: GeomInfo, cap: GeomInfo) -> Collision:
   """Calculates two contacts between a capsule and a plane."""
   n, axis = plane.mat[:, 2], cap.mat[:, 2]
-  # align contact frames with capsule axis: mjc_PlaneCapsule gives mju_makeFrame
-  # the unit axis, which it projects off the normal however short that leaves
-  # it, and only a zero projection (an axis along the normal) becomes (1, 0, 0)
+  # align contact frames with capsule axis projected onto the plane, as in C;
+  # below sqrt(eps) the projection is rounding error, so use make_frame's
   b, b_norm = math.normalize_with_norm(axis - n * jp.dot(n, axis))
-  b = jp.where(b_norm < mujoco.mjMINVAL, jp.array([1.0, 0.0, 0.0]), b)
+  degenerate = b_norm < jp.sqrt(jp.finfo(b_norm.dtype).eps)
+  b = jp.where(degenerate, math.orthogonals(n)[0], b)
   frame = jp.array([[n, b, jp.cross(n, b)]])
   segment = axis * cap.size[1]
   collisions = []
