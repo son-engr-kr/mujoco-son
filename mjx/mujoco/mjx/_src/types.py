@@ -597,7 +597,6 @@ class ModelJAX(PyTreeNode):
   tendon_hasfrictionloss: np.ndarray
   wrap_inside_maxiter: int
   wrap_inside_tolerance: float
-  wrap_inside_z_init: float
   is_wrap_inside: np.ndarray
   # baked Millard2012 curve tables, one row per distinct curve (see muscle_mtu)
   mtu_curve_cell: jax.Array

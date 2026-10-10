@@ -369,6 +369,60 @@ class TendonTest(parameterized.TestCase):
           dx._impl.ten_length, d.ten_length, atol=1e-4
       )
 
+  @parameterized.parameters('cylinder', 'sphere')
+  def test_tendon_inside_wrap(self, geom_type):
+    """Tests inside wraps, the side site at the geom's centre, in float32."""
+    # Newton from next to z = 1 in z stopped short of C's tolerance, or in
+    # float32 overshot it, and either way returned the midpoint
+    geom = {
+        'cylinder': 'type="cylinder" size=".5 1"',
+        'sphere': 'type="sphere" size=".5"',
+    }[geom_type]
+    m = mujoco.MjModel.from_xml_string(f"""
+      <mujoco>
+        <worldbody>
+          <geom name="wrap" {geom} contype="0" conaffinity="0"/>
+          <site name="side"/>
+          <body>
+            <joint type="slide"/>
+            <geom size=".01" contype="0" conaffinity="0"/>
+            <site name="p1"/>
+            <site name="p2"/>
+          </body>
+        </worldbody>
+        <tendon>
+          <spatial>
+            <site site="p1"/>
+            <geom geom="wrap" sidesite="side"/>
+            <site site="p2"/>
+          </spatial>
+        </tendon>
+      </mujoco>
+    """)
+    m.site_sameframe[:] = 0  # the site positions are set below
+    d = mujoco.MjData(m)
+    rng = np.random.default_rng(0)
+    n = 2000
+    angle = rng.uniform(0, 2 * np.pi, (n, 2))
+    radius = 0.5 * rng.uniform(1.05, 4, (n, 2))
+    site_pos = np.zeros((n, 3, 3))
+    site_pos[:, 1:, 0] = radius * np.cos(angle)
+    site_pos[:, 1:, 1] = radius * np.sin(angle)
+    if geom_type == 'cylinder':
+      site_pos[:, 1:, 2] = rng.uniform(-0.5, 0.5, (n, 2))
+    length = np.zeros(n)
+    for i in range(n):
+      m.site_pos[:] = site_pos[i]
+      mujoco.mj_forward(m, d)
+      length[i] = d.ten_length[0]
+
+    mx, dx = mjx.put_model(m), mjx.make_data(m)
+    self.assertTrue(mx._impl.is_wrap_inside.all())
+    ten_length = jax.jit(jax.vmap(
+        lambda p: mjx.forward(mx.replace(site_pos=p), dx)._impl.ten_length[0]
+    ))(jp.asarray(site_pos, jp.float32))
+    np.testing.assert_allclose(ten_length, length, atol=1e-5)
+
   def test_tendon_armature(self):
     """Tests MJX tendon armature matches MuJoCo."""
     m = mujoco.MjModel.from_xml_string("""
