@@ -3,6 +3,148 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## v3.3.3+son5.3
+
+The C engine takes upstream's tendon wrapping fix 3bc4b769; the rest is MJX. With these, every
+tendon of MyoFullBody, at 200 states of a 1000-step rollout that falls onto the floor, follows C to
+under 1e-4 mm in float64 and 5e-4 mm in float32, inside wraps included.
+
+### Fixed: tendon wrapping near wrap onset and inside wraps (upstream 3bc4b769)
+
+Backported from upstream main (google-deepmind/mujoco@3bc4b769, after 3.15.0). `wrap_inside` ran
+Newton on `z` from 1 - 1e-7, where the derivative of `asin(z)` is unbounded. When the root lies
+next to `z = 1`, the residual there is already positive, and C returned the midpoint of the two
+sites instead of the tangent point: at 1 and 5 of 20000 random inside wraps around a cylinder and a
+sphere, 0.16 to 22 mm too long, and on MyoFullBody's `EDC3` and `EDC4` sphere wraps at 4 of 200
+states of a rollout, by up to 0.17 mm. Newton now runs on `phi = asin(z)` from pi/2, with the same
+20 iterations and 1e-6. `is_intersect` takes its upper bounds from `p2 - p4`, which near wrap onset
+do not round the way the quotients `a` and `b` do, and `length_circle` its angle by `atan2`.
+`engine_util_misc_test` is now built, with upstream's cases, run through a tendon because
+`mju_wrap` is not exported in 3.3.3, and an inside wrap with its root next to `z = 1`, which fails
+on son5.2.
+
+### Fixed (MJX): a tendon grazing its wrap geom took the far side in float32
+
+When a spatial tendon only grazes a cylinder or sphere, the correct wrap has a nearly zero arc, and
+its two tangent lines nearly coincide. `support._is_intersect` then decided on the edge of its
+`[0, 1]` interval: float64 called the lines disjoint, float32 called them crossing, so the correct
+pair was penalized and the pair around the far side, an arc of 2.70 rad, won. With a path grazing a
+cylinder by micrometers and its end site moved by about 1 um, son5.2 was off C by over 1 mm at 24
+of 200 poses, by 114.6 mm at worst; on myolegs millard's `semiten_r` at one state of a rollout the
+path was 11.5 cm too long and the force 3.06 F_max instead of 0.47. `_is_intersect` and
+`_length_circle` are now C's, above. All 200 poses agree with C to 0.05 mm, and the tendons at that
+state to 0.001 mm. This is google-deepmind/mujoco_warp#1714 in MJX; sphere wraps share the test.
+
+### Fixed (MJX): `plane_capsule`'s contact tangent follows C at every tilt
+
+MJX swapped the tangent for a fixed axis once the capsule axis, projected on the plane, was shorter
+than 0.5, that is, once the capsule stood more than 60 degrees from the plane. `mjc_PlaneCapsule`
+hands `mju_makeFrame` the unit axis, which projects it however short that leaves it, so only an
+axis along the normal falls back. Under a pyramidal cone, MuJoCo's default, the friction pyramid
+turns with the tangent: one capsule at 65 degrees changed `qacc` by 11. The tangent and `qacc` now
+match C to 1e-16 at every tilt. This is upstream's google-deepmind/mujoco#2774. Within `sqrt(eps)`
+of the normal (1.5e-8 rad in float64, 3.5e-4 rad in float32) the projection is rounding error and
+its direction is not orthogonal to the normal, by up to 0.95 in float32 at 1e-7 rad, so the tangent
+there is `make_frame`'s, which keeps the frame orthonormal; C's is the rounding error's direction,
+or (1, 0, 0) for a zero projection.
+
+### Fixed (MJX): inside wraps used looser solver settings than C
+
+With the side site inside the wrap geom, `support.wrap_inside` solved by Newton with `maxiter` 5,
+tolerance 1e-4 and `z` from 1 - 1e-5, where C uses 20, 1e-6 and 1 - 1e-7, and it kept its last
+iterate where C returns the midpoint. Over 20000 random site pairs around a cylinder and a sphere
+with the side site at the centre, it was off C by over 0.1 mm at 52 and 65 pairs, by up to 5 cm, in
+float32 and float64 alike; on myofullbody, `PQ_left` around `PQ2_wrap_left` was off C by 1.32 mm
+and its force by 1.7 F_max. C's constants alone would not do in float32: Newton in `z` starts next
+to `z = 1`, and MuJoCo Warp measured midpoint fallbacks at 2.2% of random inputs with them
+(google-deepmind/mujoco_warp#1713). `wrap_inside` is now C's, above, Newton on `phi` with 20
+iterations, 1e-6 and C's exits, including the midpoint when the tolerance is not met;
+`wrap_inside_z_init` is gone. Over those pairs MJX agrees with C to 9e-16 m in float64 and 5e-7 m
+in float32, and `PQ_left` to 0.001 mm in both.
+
+### Fixed (MJX): Newton stopped an iteration before C
+
+Near convergence the decrease along the search falls below the rounding of the cost, and the line
+search moved only on a strictly lower cost. `CGsearch` keeps its Newton point unless the start costs
+strictly less, so C took a step that MJX discarded, and the zero improvement then ended the solve.
+A point whose cost ties now still counts when its slope is nearer zero. On myolegs hyfydy at the
+step where a joint limit row turns on, C and MJX both run two iterations from the same warm start
+and `qacc` agrees to 3e-12, where it differed by 2.6e-6 (|qacc| about 70). `solve` also writes
+`solver_niter`, which kept the value `put_data` gave it.
+
+### Added (MJX): reverse mode through several solver iterations
+
+Reverse mode went through the constraint solve only with `opt.iterations` at 1. With
+`opt.tolerance` at 0 the solve now runs all `opt.iterations` as a scan, which reverse mode
+differentiates, in either solver precision, as the open upstream PR google-deepmind/mujoco#3583
+does for google-deepmind/mujoco#2259. `Option.tolerance` is static as a result: changing it
+recompiles, and it cannot be batched over. On a coupled-joint muscle model, the gradient through
+five iterations matches central differences to 1e-5 in float64, and `solver_dtype=float64` in a
+float32 model matches that to 1e-3.
+
+### Fixed (MJX): the float32 fiber Newton of `millard_mtu` and `hyfydy_mtu` settles
+
+Its residual stops falling near 1e-6 in float32, above the default tolerance of 1e-9, so the
+convergence test never fired, and the fiber kept moving by its rounding until the iteration cap: in
+a batched float32 `forward` on 500 myolegs states, 9.6% of the millard fibers and 8.9% of the
+hyfydy fibers differed between `cmtu_iter` 20 and 21. The loop now also stops after a step no
+larger than the rounding of the lengths it is computed from, `eps (|l_mtu| + |l_ce|)`, and none
+differ. It stops within six iterations in all of 16000 solves, with the same error to the
+float64 root as before (median 2.3e-8 l_opt), and the forces agree with C as before (median 3e-6
+F_max, at most 2e-4). In float64 the tolerance is reached first in every one of those solves, so
+double precision keeps C's iterates.
+
+### Fixed (MJX): float32 Millard tables could read a cell's knots at the next cell's position
+
+`_table_eval` took the cell index for its knot gather and the position within the cell from the
+same `s = (x - x0) / dx`, but XLA computes `s` anew in each fusion that reads it, some copies with a
+fused multiply-add, and in float32 the copies can land on either side of a knot. The knots of cell
+`i` were then evaluated at the position in cell `i + 1`, off by a cell's rise: within 30 float32
+steps of the knots, a jitted read of the strain formed in the same program was off the float64
+value by up to 9.5e-3 (active force-length), 3.9e-3 (passive), 2.0e-3 (tendon) and 1.9e-2
+(force-velocity), and a fiber Newton jitted on its own fell into a two-cycle across a tendon knot,
+3.4e-5 l_opt from the root. `put_model` now bakes each cell's two knots together with its index,
+one gather reads them, and the position is taken against the gathered index; the reads above are
+within 1.8e-6. How often the copies disagree depends on XLA's fusion: in `forward` and in
+vmapped `step` of myolegs millard on CPU, the 40000 muscle forces checked against C were the same
+before and after.
+
+### Comparing with C
+
+`compliant_muscle_equilibrate` in float32 places some fibers up to 4e-4 l_opt from C's, on
+MyoFullBody at zero activation, and this is C's tolerance rather than an error. Where the tendon is
+just slack, the residual rises quadratically off zero, so `|R| < 1e-6` holds over
+`sqrt(1e-6) l_slack E_REF`, 4e-4 l_opt for `fdl`; C stops anywhere in that band, and so does MJX.
+Both points pass C's test in double, and the tendon forces differ by under 1e-6 F_max. float64
+agrees with C to 7e-10 only because it takes C's iterates. Where the tendon is taut and stiff, the
+fibers agree to one float32 step (1.2e-7 l_opt), and that step alone moves the force by up to
+1.2e-4 F_max (`rect_abd`, slope 880 per l_opt), which no stopping rule can recover in float32.
+
+### Verification
+
+- The whole MJX suite, 435 tests, passes, and the C tests, 835 with `engine_util_misc_test`.
+- New tests: grazing cylinder and sphere wraps in float32 against C, inside wraps in float32 against
+  C at 2000 random site pairs, and Warp's two asymmetric inside wraps, the `plane_capsule` frame at
+  random tilts against C and orthonormal next to the normal, the line search under a cost too
+  large to resolve its decrease, the reported iteration count, the gradient of a five-iteration
+  solve against central differences, the float32 fiber Newton holding still on a soleus-like
+  muscle, float32 table reads next to every fifth knot against float64, and in C an inside wrap
+  with its root next to `z = 1`. Each fails on son5.2; the table test's reads, run on son5.2's
+  lookup, are off by 2e-3 to 1.9e-2 against its 1e-5 bound.
+
+### Found, not fixed
+
+- MyoAssist's myoLeg80 exoskeleton models are refused by `put_model`. DEPHY, HMEDI, HUMOTECH and
+  OPENEXO have a 1 mm margin on the 23 capsules and 5 ellipsoids that touch the height field: the
+  23 hfield-capsule pairs are refused for the margin, and the 5 hfield-ellipsoid pairs have no MJX
+  collision function at all. OSL_KA adds hfield-cylinder pairs, which also have none, margin on its
+  plane-mesh and hfield-mesh pairs, and two explicit ellipsoid-mesh pairs between the prosthesis and
+  the foot, which have none either. Upstream main is the same. MJX's height-field functions keep
+  only penetrating points, and `_capsule_convex` reports only penetration, so margin there needs a
+  different algorithm; MuJoCo Warp 3.11 runs these pairs through GJK/EPA and raises the prism tops
+  by the margin. In all five models the height field is flat, invisible and 5 mm below the ground
+  plane, so it touches only a geom already 5 mm into the plane.
+
 ## v3.3.3+son5.2
 
 MJX only; the C engine is son5.1's. With these, the hanging myolegs model (elliptic cone, condim=1
