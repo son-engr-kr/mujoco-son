@@ -17,6 +17,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 #include <gmock/gmock.h>
@@ -139,6 +140,101 @@ TEST_F(UtilMiscTest, SphereWrap) {
 
   mj_deleteData(data);
   mj_deleteModel(model);
+}
+
+// upstream's mju_wrap cases from 3bc4b769, through a tendon: mju_wrap is not
+// exported from this library
+mjModel* WrapModel(const char* type, mjtNum radius) {
+  char xml[1024];
+  std::snprintf(xml, sizeof(xml), R"(
+  <mujoco>
+    <worldbody>
+      <geom name="w" type="%s" size="%.17g 1"/>
+      <site name="side"/>
+      <site name="p0"/>
+      <site name="p1"/>
+    </worldbody>
+    <tendon>
+      <spatial><site site="p0"/><geom geom="w" sidesite="side"/><site site="p1"/></spatial>
+    </tendon>
+  </mujoco>
+  )", type, radius);
+  mjModel* model = LoadModelFromString(xml);
+  for (int i = 0; i < model->nsite; i++) model->site_sameframe[i] = 0;
+  return model;
+}
+
+TEST_F(UtilMiscTest, WrapInside) {
+  struct Case {
+    mjtNum end[4];
+    mjtNum pnt[2];
+  };
+  const Case cases[] = {
+      {{2.0, 0.0, -0.7, 0.7}, {0.12578591002669121, 0.48391931645549874}},
+      {{2.0, 0.0, -0.7, -0.7}, {0.12578591002669121, -0.48391931645549874}},
+      {{1.0, 0.0, -1.4, 1.4}, {0.25140493009239173, 0.43219852050329788}},
+      {{1.666667, 0.0, -2.185531, 1.213859},
+       {0.1502227865088118, 0.47689948040811281}},
+      {{1.0, 0.0, -1.425755, 1.402577},
+       {0.25020009696447665, 0.43289711419570182}},
+      // the root next to z = 1: Newton in z from 1 - 1e-7 starts past it, and
+      // returned the midpoint in double precision too
+      {{1.0, 0.0, -1.4269108501359766, 1.4014012365358552},
+       {0.25002165023621337, 0.43300020140083144}},
+  };
+
+  for (const char* type : {"sphere", "cylinder"}) {
+    mjModel* model = WrapModel(type, 0.5);
+    mjData* data = mj_makeData(model);
+    for (const Case& c : cases) {
+      mju_zero3(model->site_pos);
+      mjtNum p0[3] = {c.end[0], c.end[1], 0}, p1[3] = {c.end[2], c.end[3], 0};
+      mju_copy3(model->site_pos + 3, p0);
+      mju_copy3(model->site_pos + 6, p1);
+      mj_forward(model, data);
+      // the path is p0, the two wrap points (the same, inside), p1
+      ASSERT_EQ(data->ten_wrapnum[0], 4) << type;
+      const mjtNum* pnt = data->wrap_xpos + 3 * (data->ten_wrapadr[0] + 1);
+      for (int k = 0; k < 2; k++) {
+        EXPECT_NEAR(pnt[3*k + 0], c.pnt[0], 1e-6) << type;
+        EXPECT_NEAR(pnt[3*k + 1], c.pnt[1], 1e-6) << type;
+        EXPECT_EQ(pnt[3*k + 2], 0) << type;
+      }
+    }
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
+}
+
+TEST_F(UtilMiscTest, WrapCircleOnset) {
+  const mjtNum x0[3] = {0.158835, -0.02149, 0};
+  const mjtNum x1[3] = {-0.190895, 0.059719, 0};
+  const mjtNum side_pos[3] = {0, 0.015, 0};
+
+  for (const char* type : {"sphere", "cylinder"}) {
+    mjModel* model = WrapModel(type, 0.015);
+    mjData* data = mj_makeData(model);
+    for (bool sidesite : {false, true}) {
+      // the side site on the circle is outside it, as mju_wrap's side is
+      model->wrap_prm[1] = sidesite ? 0 : -1;
+      mju_copy3(model->site_pos, side_pos);
+      mju_copy3(model->site_pos + 3, x0);
+      mju_copy3(model->site_pos + 6, x1);
+      mj_forward(model, data);
+      ASSERT_EQ(data->ten_wrapnum[0], 4) << type;
+      const mjtNum* pnt = data->wrap_xpos + 3 * (data->ten_wrapadr[0] + 1);
+      EXPECT_NEAR(pnt[0], 0.0033934139554204273, 1e-15) << type;
+      EXPECT_NEAR(pnt[1], 0.014611117059525527, 1e-15) << type;
+      EXPECT_EQ(pnt[2], 0) << type;
+      EXPECT_NEAR(pnt[3], 0.0033923177705339506, 1e-15) << type;
+      EXPECT_NEAR(pnt[4], 0.014611371603779007, 1e-15) << type;
+      EXPECT_EQ(pnt[5], 0) << type;
+      mjtNum arc = data->ten_length[0] - mju_dist3(x0, pnt) - mju_dist3(pnt + 3, x1);
+      EXPECT_NEAR(arc, 1.1253506488708159e-6, 1e-12) << type;
+    }
+    mj_deleteData(data);
+    mj_deleteModel(model);
+  }
 }
 
 // compute time constant as in Millard et al. (2013) https://doi.org/10.1115/1.4023390

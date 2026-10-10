@@ -67,6 +67,8 @@ mujoco_test(engine_util_blas_test)
 
 mujoco_test(engine_util_errmem_test)
 
+mujoco_test(engine_util_misc_test)
+
 mujoco_test(engine_util_solve_test)
 
 mujoco_test(engine_util_spatial_test)
