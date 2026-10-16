@@ -3,6 +3,62 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## v3.3.3+son5.4
+
+MJX only. Reverse-mode gradients through spatial tendon wraps are finite where they were NaN, and
+match C's central differences; lengths are unchanged in float64 and move by rounding in float32.
+
+### Fixed (MJX): NaN gradients through tendon wraps
+
+`jax.grad` through a spatial tendon's geom wrap returned NaN while the length matched C. MJX
+evaluates every branch and selects with `jp.where`, and an infinite or NaN derivative in a branch
+that is not selected still makes the reverse-mode gradient NaN. Four places did so:
+
+- `support.wrap`'s cylinder correction, which also runs for spheres, took `sqrt` of zero. Where an
+  inside wrap wraps, its two wrap points coincide and `sqrt(wlen² + height²)` is `sqrt(0)`; with
+  no wrap, a site on the geom's z axis is at zero from its projection. These are now `math.norm`,
+  whose gradient at zero is zero.
+- `support.wrap_inside`, past its exits, took `asin(A z)` with `A > 1` for a site inside the
+  circle, and `acos(cosG)` at `cosG = ±1`. Where an exit is taken, `A`, `B` and `cosG` are now
+  replaced by values the solver is defined at; its solution is not selected there. In float32,
+  `1 - mjMINVAL` rounds to 1, so `cosG = 1` now also takes C's exit for `cosG > 1 - mjMINVAL`;
+  float64 is unchanged.
+- `support._length_circle` took `atan2(0, 0)` where a tangent point is zero, for a site on a
+  cylinder's axis.
+- `_length_moment` and `tendon_dot` divided a zero-length segment by its length, below.
+
+On the reproduction of upstream's google-deepmind/mujoco#3696 (one hinge, a side site inside the
+wrap geom), son5.3's gradient of `ten_length` was NaN at q = 0 and 1 for a sphere and at q = 1 for
+a cylinder. It and the gradient of `ten_J` now match C's central differences at all four angles,
+in float32 and float64. On upstream 3.16.0 the `sqrt` above remains NaN with the clip #3696
+proposes.
+
+Over 800 poses each of a sphere and a cylinder, with the side site inside and outside, random and
+aligned (sites on an axis, mirrored, collinear with the centre), son5.3's Jacobians of `ten_length`
+and `ten_J` with respect to the site positions were non-finite at 675, 60, 664 and 66 poses in
+float64 (678, 60, 682 and 66 in float32), and now at none. At the 300 random poses of each, the
+gradients of `ten_length` match C's central differences to 1e-5. Elsewhere they differ only where
+C's length is not differentiable: where it jumps between wrapping and not, where the side site
+ties the two wrap sides, and with sites collinear with a sphere's centre, where the wrap plane is
+undefined.
+
+On MyoFullBody, at 20 states of a 1000-step rollout that falls onto the floor, son5.3's gradient
+of a random combination of the 424 tendon lengths with respect to `qpos` was NaN in 64 of 129
+entries at every state, and is now finite. Over 200 states of that rollout the lengths moved by
+1.7e-13 mm in float64 and 1.0e-4 mm in float32, where they are 4.6e-4 mm from C.
+
+`smooth_test`'s `test_tendon_wrap_grad`, against C, and `test_tendon_wrap_grad_finite`, at
+degenerate poses, fail on son5.3.
+
+### Fixed (MJX): safe division (upstream 0ba31e2c)
+
+Backported from upstream (google-deepmind/mujoco@0ba31e2c, after 3.3.3): `math.safe_div`, in
+`_length_moment`, `tendon_dot`, `support.wrap`'s cylinder correction, `ray` and `plane_cylinder`.
+Where an inside wrap wraps, `_length_moment` divided its zero-length segment by its length, 0/0 in
+a branch not selected, which made the gradient of `ten_J` NaN. son5.3 already had its own versions
+of the commit's `_is_intersect`, `wrap_inside` and `muscle_dynamics_timescale` hunks, and keeps
+them.
+
 ## v3.3.3+son5.3
 
 The C engine takes upstream's tendon wrapping fix 3bc4b769; the rest is MJX. With these, every

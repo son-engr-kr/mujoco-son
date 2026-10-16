@@ -13,11 +13,12 @@
 
 ## Install (mujoco-son)
 
-> **`son5.3` brings tendon wrapping and float32 MJX in line with C.** The C engine
-> takes upstream's tendon wrapping fix, and MJX's wraps, plane-capsule frames,
-> line search and float32 muscle solves follow C. `son5.2` made MJX's contacts
-> follow C, and `son5.1` made sphere and capsule contacts with an ellipsoid exact
-> and brought upstream's GJK fix to the C engine. `son5.0` added MJX: the
+> **`son5.4` makes MJX's gradients through tendon wraps finite.** Reverse mode
+> through a spatial tendon's wraps no longer returns NaN, and matches C's finite
+> differences; lengths change only by float32 rounding. `son5.3` brought tendon
+> wrapping and float32 MJX in line with C, `son5.2` made MJX's contacts follow C,
+> and `son5.1` made sphere and capsule contacts with an ellipsoid exact and
+> brought upstream's GJK fix to the C engine. `son5.0` added MJX: the
 > muscle models are verified against OpenSim's own curves and covered by unit
 > tests, and son's MJX runs them as the C engine does, checked on musculoskeletal
 > leg models converted from OpenSim.
@@ -31,13 +32,13 @@ needs to be bumped between releases.
 
 ```bash
 # Linux x86_64 (glibc >= 2.35 — Ubuntu 22.04+, Debian 12+, recent Fedora/RHEL)
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.3/mujoco-3.3.3+son5.3-cp311-cp311-linux_x86_64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.4/mujoco-3.3.3+son5.4-cp311-cp311-linux_x86_64.whl
 
 # macOS Apple Silicon (M1/M2/M3/M4, macOS 11+)
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.3/mujoco-3.3.3+son5.3-cp311-cp311-macosx_11_0_arm64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.4/mujoco-3.3.3+son5.4-cp311-cp311-macosx_11_0_arm64.whl
 
 # Windows x86_64
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.3/mujoco-3.3.3+son5.3-cp311-cp311-win_amd64.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.4/mujoco-3.3.3+son5.4-cp311-cp311-win_amd64.whl
 ```
 
 son's MJX, which runs the three muscle-tendon gains under JAX, is a separate
@@ -45,7 +46,7 @@ pure-Python wheel on the same page. It needs the mujoco wheel of the same versio
 and `jax==0.7.2`:
 
 ```bash
-pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.3/mujoco_mjx-3.3.3+son5.3-py3-none-any.whl
+pip install https://github.com/son-engr-kr/mujoco-son/releases/download/v3.3.3+son5.4/mujoco_mjx-3.3.3+son5.4-py3-none-any.whl
 ```
 
 For Python versions other than 3.11, build from the sdist
