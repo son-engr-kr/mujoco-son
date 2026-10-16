@@ -470,7 +470,12 @@ class BindData(object):
         return name
       else:
         raise AttributeError('ctrl is not available for this type')
-    if name == 'qpos' or name == 'qvel' or name == 'qacc' or name.startswith('qfrc_'):
+    if (
+        name == 'qpos'
+        or name == 'qvel'
+        or name == 'qacc'
+        or name.startswith('qfrc_')
+    ):
       if self.prefix == 'jnt_':
         return name
       else:
@@ -1002,8 +1007,8 @@ def wrap(
   l1 = jp.sqrt(
       (p1[0] - res[3]) * (p1[0] - res[3]) + (p1[1] - res[4]) * (p1[1] - res[4])
   )
-  r2 = p0[2] + (p1[2] - p0[2]) * l0 / (l0 + wlen + l1)
-  r5 = p0[2] + (p1[2] - p0[2]) * (l0 + wlen) / (l0 + wlen + l1)
+  r2 = p0[2] + (p1[2] - p0[2]) * math.safe_div(l0, l0 + wlen + l1)
+  r5 = p0[2] + (p1[2] - p0[2]) * math.safe_div(l0 + wlen, l0 + wlen + l1)
   height = jp.abs(r5 - r2)
 
   wlen = jp.where(is_sphere, wlen, jp.sqrt(wlen * wlen + height * height))
