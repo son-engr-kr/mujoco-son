@@ -3,6 +3,52 @@
 Changes made by this fork, on top of upstream MuJoCo. Upstream's own changelog is
 [doc/changelog.rst](doc/changelog.rst) and is left untouched so it stays mergeable.
 
+## v3.3.3+son5.5
+
+The C engine takes two upstream GJK fixes, 7f305abd7 and d33f297b5; MJX is son5.4's. At the default
+`ccd_tolerance` of 1e-6 results are unchanged.
+
+### Fixed: GJK dropped contacts and made up penetrations at small `ccd_tolerance` (7f305abd7)
+
+Backported from upstream (google-deepmind/mujoco@7f305abd7, in 3.12.0). For a sphere or capsule, GJK
+shrinks the geom to its center or axis, measures the distance to the other geom, and stops once the
+Frank-Wolfe gap is below `0.5 tol²`. From 1e-9 down that is under the rounding of `|x|²`, about
+`2.2e-16 |x|²` with `|x|` the radius plus the distance, so GJK did not stop once converged and took
+a step onto a nearly degenerate simplex. There the iterate could move away from the origin, past the
+margin, and the contact was dropped, or toward it, and a penetration was reported where there is
+none. On myolegs, a tibia capsule and a foot ellipsoid 8.45e-5 m apart, inside their 1e-3 margin,
+lost their contact at 1e-10 and 1e-12 whatever `ccd_iterations`, and the same pair, its pose rounded
+through XML, reported -1.5e-3 m from 1e-9 down. GJK now also stops once `|x|` changes by less than
+`mjMINVAL`, as upstream does; son's contact threshold on `|x|` stays `mjMINVAL`, without upstream's
+330c36c9.
+
+Over 600 capsule-ellipsoid poses at distances known from an independent closest-point computation,
+315 of them within the margin, son5.4 got 4 distances wrong by up to 4.5e-4 m from 1e-9 to 1e-12,
+and 1 by 4.3e-6 m at 1e-8. son5.5 gets 1 of the 600 wrong, by at most 4.3e-6 m, at every tolerance
+from 1e-8 to 1e-12, as upstream 3.16 does. At 1e-6 the 600 contacts, and 1000-step rollouts of
+myolegs and MyoFullBody, are bitwise those of son5.4 built with the same compiler; with both fixes,
+at 1e-8 they move by up to 2.0e-5 in `qpos`. `engine_collision_gjk_test`'s two tests with the
+myolegs pair, at its frames and at its XML pose, fail on son5.4; the C suite, 838 tests, passes.
+
+### Fixed: contact normals below the default `ccd_tolerance` (upstream d33f297b5)
+
+Backported from upstream (google-deepmind/mujoco@d33f297b5, in 3.12.0). When GJK's closest point on
+a tetrahedron lay on the face opposite its fourth vertex, `S3D` kept that vertex's barycentric
+coordinate from a face checked before, so the next iterate and the witness points, which give the
+contact normal, still weighted that vertex. At the 600 poses above, son5.4's normals were off the
+closest points' by up to 9e-4 at `ccd_tolerance` 1e-7 and 4e-4 at 1e-8, where at 1e-6 they are off
+by at most 3e-5. With both fixes they are off by at most 3e-5 at every tolerance from 1e-6 to 1e-10,
+and the distances are as above. `engine_collision_gjk_test`'s test with one of these poses fails
+without this fix.
+
+### Comparing with C (corrects son5.2)
+
+son5.2 advised `ccd_tolerance` near 1e-10 for MJX-C comparisons. On son5.4 and earlier, do not go
+below 1e-8: from 1e-9 down, the GJK above drops contacts inside the margin and reports penetrations
+of a millimeter that are not there, and below 1e-6 capsule-ellipsoid normals are off by up to 9e-4.
+On son5.5, from 1e-8 to 1e-12, 1 of the 600 poses above is off, by at most 4.3e-6 m, as in upstream
+3.16, and from 1e-6 to 1e-10 the normals by at most 3e-5.
+
 ## v3.3.3+son5.4
 
 MJX only. Reverse-mode gradients through spatial tendon wraps are finite where they were NaN, and
@@ -253,7 +299,8 @@ inactive.
 
 C's EPA sets the floor. At the default `ccd_tolerance`, its capsule-ellipsoid normals are off the
 exact ones by about 6e-6 and its ellipsoid-ellipsoid normals by up to 2e-2. For MJX-C comparisons
-with these pairs, set `ccd_tolerance` near 1e-10, and keep `ccd_iterations` at 170 or less: this
+with these pairs, set `ccd_tolerance` to 1e-8, not lower (this advised 1e-10 until son5.5, which
+explains why that drops contacts), and keep `ccd_iterations` at 170 or less: this
 3.3.3 engine's `mj_geomDistance` uses a static EPA buffer of that size and crashes above it. On
 MyoFullBody the humerus-thorax contacts match C to nine digits, and what remains is C's normal
 (1.6e-7 off at `ccd_tolerance` 1e-10), amplified by the model.
