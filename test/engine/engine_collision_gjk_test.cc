@@ -1989,6 +1989,83 @@ TEST_F(MjGjkTest, CapsuleAxisInsideEllipsoidNoContact) {
   ExpectCapsuleEllipsoidDist(xml, -0.035860711);
 }
 
+// A capsule and an ellipsoid 8.45e-5 apart, inside their 1e-3 margin (two
+// geoms of a musculoskeletal model). Below ccd_tolerance 1e-9, the Frank-Wolfe
+// gap 0.5 * tol^2 is under rounding, so GJK did not stop once converged and
+// stepped onto a degenerate simplex: the closest point moved away from the
+// origin, past the cutoff, or toward it, into a millimeter of penetration
+// (fixed upstream by 7f305abd7). The expected distance is that of the closest
+// points, computed independently.
+constexpr char kCapsuleEllipsoidMargin[] = R"(
+<mujoco>
+  <worldbody>
+    <body pos="-0.19070873791590842 0.0846192152638544 0.8128417845154028"
+          quat="0.9644751479803845 -0.015146690385952963 0.263542676664933
+                -0.010174687948548802">
+      <freejoint/>
+      <geom type="capsule" size="0.048 0.10500744021258683" margin="0.001"/>
+    </body>
+    <body pos="-0.20375158199416835 0.011366481551963556 0.6646155770511855"
+          quat="0.5500929296110492 0.6762751347516857 0.3622320895844368
+                -0.3299054776505168">
+      <freejoint/>
+      <geom type="ellipsoid" size="0.085 0.035 0.04" margin="0.001"/>
+    </body>
+  </worldbody>
+</mujoco>)";
+
+TEST_F(MjGjkTest, CapsuleEllipsoidMarginTightTolerance) {
+  std::array<char, 1000> error;
+  mjModel* model = LoadModelFromString(kCapsuleEllipsoidMargin, error.data(),
+                                       error.size());
+  ASSERT_THAT(model, NotNull()) << "Failed to load model: " << error.data();
+  mjData* data = mj_makeData(model);
+
+  for (mjtNum tolerance : {1e-6, 1e-9, 1e-10, 1e-12}) {
+    model->opt.ccd_tolerance = tolerance;
+    mj_forward(model, data);
+    ASSERT_EQ(data->ncon, 1) << "ccd_tolerance " << tolerance;
+    EXPECT_NEAR(data->contact[0].dist, 8.4539763499e-5, 1e-11)
+        << "ccd_tolerance " << tolerance;
+  }
+  mj_deleteData(data);
+  mj_deleteModel(model);
+}
+
+// The same pair at the geom frames the model had, which XML rounds: at these,
+// the contact was dropped
+TEST_F(MjGjkTest, CapsuleEllipsoidMarginTightToleranceFrames) {
+  std::array<char, 1000> error;
+  mjModel* model = LoadModelFromString(kCapsuleEllipsoidMargin, error.data(),
+                                       error.size());
+  ASSERT_THAT(model, NotNull()) << "Failed to load model: " << error.data();
+  mjData* data = mj_makeData(model);
+
+  const mjtNum pos[6] = {
+    -0.19070873791590842, 0.0846192152638544, 0.8128417845154028,
+    -0.20375158199416835, 0.011366481551963556, 0.6646155770511855};
+  const mjtNum mat[18] = {
+    0.8608834666028649, 0.011642868675803582, 0.5086689498473764,
+    -0.027610065983519783, 0.9993341069910038, 0.023854283910428126,
+    -0.5080524984548549, -0.034580141895192075, 0.8606316706932697,
+    0.5199005781829542, 0.8528944517812097, -0.04769111998957515,
+    0.1269797689991885, -0.13237136413445189, -0.9830330412667204,
+    -0.8447363654241145, 0.5050236391279269, -0.17712028921623546};
+
+  for (mjtNum tolerance : {1e-6, 1e-9, 1e-10, 1e-12}) {
+    model->opt.ccd_tolerance = tolerance;
+    mj_kinematics(model, data);
+    mju_copy(data->geom_xpos, pos, 6);
+    mju_copy(data->geom_xmat, mat, 18);
+    mj_collision(model, data);
+    ASSERT_EQ(data->ncon, 1) << "ccd_tolerance " << tolerance;
+    EXPECT_NEAR(data->contact[0].dist, 8.4539763499e-5, 1e-11)
+        << "ccd_tolerance " << tolerance;
+  }
+  mj_deleteData(data);
+  mj_deleteModel(model);
+}
+
 TEST_F(MjGjkTest, CylinderBoxMargin) {
   static constexpr char xml[] = R"(
   <mujoco>

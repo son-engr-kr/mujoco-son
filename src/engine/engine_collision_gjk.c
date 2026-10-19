@@ -183,18 +183,18 @@ static void gjk(mjCCDStatus* status, mjCCDObj* obj1, mjCCDObj* obj2) {
 
   // if both geoms are discrete, finite convergence is guaranteed; set tolerance to 0
   mjtNum epsilon = discreteGeoms(obj1, obj2) ? 0 : 0.5 * status->tolerance * status->tolerance;
-  mjtNum x_norm;
 
   // set initial guess
   sub3(x_k, x1_k, x2_k);
+  mjtNum x_norm = norm3(x_k), x_norm_prev = 0;  // set to 0 for no-op on first iteration
 
   for (; k < kmax; k++) {
-    // compute the kth support point
-    x_norm = dot3(x_k, x_k);
-    if (x_norm < mjMINVAL2) {
+    // geoms in contact, or x_norm has stagnated
+    if (x_norm < mjMINVAL || mju_abs(x_norm_prev - x_norm) < mjMINVAL) {
       break;
     }
-    x_norm = mju_sqrt(x_norm);
+
+    // compute the kth support point
     gjkSupport(simplex + n, obj1, obj2, x_k, x_norm);
     mjtNum *s_k = simplex[n].vert;
 
@@ -218,8 +218,8 @@ static void gjk(mjCCDStatus* status, mjCCDObj* obj1, mjCCDObj* obj2) {
         return;
       }
     } else if (status->dist_cutoff < mjMAX_LIMIT) {
-      mjtNum vs = dot3(x_k, s_k), vv = dot3(x_k, x_k);
-      if (dot3(x_k, s_k) > 0 && (vs*vs / vv) >= cutoff2) {
+      mjtNum vs = dot3(x_k, s_k);
+      if (vs > 0 && (vs * vs) >= cutoff2 * (x_norm * x_norm)) {
         status->gjk_iterations = k;
         status->nsimplex = 0;
         status->nx = 0;
@@ -263,24 +263,17 @@ static void gjk(mjCCDStatus* status, mjCCDObj* obj1, mjCCDObj* obj2) {
       return;
     }
 
-    // get the next iteration of x_k
-    mjtNum x_next[3];
-    lincomb(x_next, lambda, n, simplex[0].vert, simplex[1].vert,
-            simplex[2].vert, simplex[3].vert);
-
-    // x_k has converged to minimum
-    if (equal3(x_next, x_k)) {
-      break;
-    }
-
-    // copy next iteration into x_k
-    copy3(x_k, x_next);
-
     // we have a tetrahedron containing the origin so return early
     if (n == 4) {
       x_norm = 0;
       break;
     }
+
+    // get the next iteration of x_k, save previous x_norm
+    lincomb(x_k, lambda, n, simplex[0].vert, simplex[1].vert,
+            simplex[2].vert, simplex[3].vert);
+    x_norm_prev = x_norm;
+    x_norm = norm3(x_k);
   }
 
   // compute the approximate witness points
