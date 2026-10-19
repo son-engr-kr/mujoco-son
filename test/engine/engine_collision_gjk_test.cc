@@ -2066,6 +2066,64 @@ TEST_F(MjGjkTest, CapsuleEllipsoidMarginTightToleranceFrames) {
   mj_deleteModel(model);
 }
 
+// A capsule and an ellipsoid 1.6e-4 apart, inside their margin. S3D kept a
+// stale fourth barycentric coordinate when the closest point lay on a face, so
+// below ccd_tolerance 1e-6 the witness points, and the normal, were off by up
+// to 9e-4 (fixed upstream by d33f297b5). The expected distance and normal are
+// those of the closest points, computed independently.
+TEST_F(MjGjkTest, CapsuleEllipsoidMarginTightToleranceNormal) {
+  static constexpr char xml[] = R"(
+  <mujoco>
+    <worldbody>
+      <body>
+        <freejoint/>
+        <geom type="capsule" size="0.01727160790951536 0.052976308336979416"
+              margin="0.001"/>
+      </body>
+      <body>
+        <freejoint/>
+        <geom type="ellipsoid"
+              size="0.042649503161073715 0.07830571512953152 0.08219738958411889"
+              margin="0.001"/>
+      </body>
+    </worldbody>
+  </mujoco>)";
+  std::array<char, 1000> error;
+  mjModel* model = LoadModelFromString(xml, error.data(), error.size());
+  ASSERT_THAT(model, NotNull()) << "Failed to load model: " << error.data();
+  mjData* data = mj_makeData(model);
+
+  const mjtNum pos[6] = {
+    0, 0, 0,
+    0.061816195213493026, -0.019066057134901483, -0.04752195002139872};
+  const mjtNum mat[18] = {
+    0.31694155152580866, -0.544342852527644, 0.7766845639115536,
+    0.9316125782898167, 0.025078471449395623, -0.3625866437721631,
+    0.17789338629812185, 0.8384878825432297, 0.5150650579679792,
+    -0.9283900347858598, 0.29046851339543633, 0.23177572356947784,
+    0.00046527680281541195, -0.6228024448000782, 0.7823789991228945,
+    0.3716069520714145, 0.726460706079063, 0.5780684351314319};
+  const mjtNum normal[3] = {0.6682401403390797, 0.018867807526580682,
+                            -0.7437063403513156};
+
+  for (mjtNum tolerance : {1e-6, 1e-7, 1e-8, 1e-10}) {
+    model->opt.ccd_tolerance = tolerance;
+    mj_kinematics(model, data);
+    mju_copy(data->geom_xpos, pos, 6);
+    mju_copy(data->geom_xmat, mat, 18);
+    mj_collision(model, data);
+    ASSERT_EQ(data->ncon, 1) << "ccd_tolerance " << tolerance;
+    EXPECT_NEAR(data->contact[0].dist, 1.6042305488e-4, 1e-9)
+        << "ccd_tolerance " << tolerance;
+    for (int i = 0; i < 3; i++) {
+      EXPECT_NEAR(data->contact[0].frame[i], normal[i], 2e-5)
+          << "ccd_tolerance " << tolerance;
+    }
+  }
+  mj_deleteData(data);
+  mj_deleteModel(model);
+}
+
 TEST_F(MjGjkTest, CylinderBoxMargin) {
   static constexpr char xml[] = R"(
   <mujoco>
