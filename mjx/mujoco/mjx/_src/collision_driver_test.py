@@ -254,6 +254,7 @@ class EllipsoidCollisionTest(parameterized.TestCase):
 
   _ELLIPSOID_PAIR = """
     <mujoco>
+      <option ccd_tolerance="1e-10" ccd_iterations="500"/>
       <worldbody>
         <body>
           <freejoint/>
@@ -290,9 +291,10 @@ class EllipsoidCollisionTest(parameterized.TestCase):
         continue
       ntest += 1
       contact = collide(mx, mjx.put_data(m, d))._impl.contact
-      # C's EPA gets the distance to about 1e-6 here, but its contact position
-      # and normal only to about 1e-4 and 2e-2
-      np.testing.assert_allclose(contact.dist, d.contact.dist, atol=1e-5)
+      # with the tight ccd options C's EPA converges on the distance (at the
+      # defaults it stops up to 2e-5 short at some of these poses); position
+      # and normal are checked against the support gap below
+      np.testing.assert_allclose(contact.dist, d.contact.dist, atol=1e-6)
       # the distance is the largest support gap over directions, attained
       # along the normal, whose support points the position is the middle of
       a = [
