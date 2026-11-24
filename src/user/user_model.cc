@@ -399,6 +399,9 @@ void mjCModel::SaveDofOffsets(bool computesize) {
       actuator->actdim_ = actuator->actdim;
     } else if (actuator->spec.actdim > 0) {
       actuator->actdim_ = actuator->spec.actdim;
+    } else if ((actuator->spec.dyntype == mjDYN_MILLARD2012 ||
+                actuator->spec.dyntype == mjDYN_GEYER2010) && !actuator->spec.plugin.active) {
+      actuator->actdim_ = 2;  // fiber, activation
     } else {
       actuator->actdim_ = (actuator->spec.dyntype != mjDYN_NONE);
     }
