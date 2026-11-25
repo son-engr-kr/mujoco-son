@@ -742,14 +742,17 @@ void mj_muscleActDot(const mjModel* m, mjData* d, int i, mjtNum ctrl) {
   int fiber = m->actuator_actadr[i];
   int activation = fiber + m->actuator_actnum[i] - 1;
   const mjtNum* dynprm = m->actuator_dynprm + mjNDYN*i;
+  const mjtNum* gainprm = m->actuator_gainprm + mjNGAIN*i;
   mjMuscle p;
   muscleModel(&p, m, i);
 
   // activation, time constants scaled by the activation as in Millard et al. (2013); Millard2012
   // as OpenSim's MuscleFirstOrderActivationDynamicModel, excitation floored at the minimum
-  // activation; Geyer2010 with a smooth switch between the time constants
+  // activation, with an optional smooth switch between the time constants (OpenSim's is abrupt,
+  // tausmooth 0); Geyer2010 with a smooth switch between the time constants
   if (p.type == mjDYN_MILLARD2012) {
-    mjtNum prm[3] = {dynprm[mjMILLARD_TAUACT], dynprm[mjMILLARD_TAUDEACT], 0};
+    mjtNum prm[3] = {dynprm[mjMILLARD_TAUACT], dynprm[mjMILLARD_TAUDEACT],
+                     gainprm[mjMILLARD_TAUSMOOTH]};
     d->act_dot[activation] = mju_muscleDynamics(mju_max(ctrl, p.minact), d->act[activation], prm);
   } else {
     mjtNum prm[3] = {dynprm[mjGEYER_TAUACT], dynprm[mjGEYER_TAUDEACT], dynprm[mjGEYER_TAUSMOOTH]};

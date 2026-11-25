@@ -3411,6 +3411,9 @@
                :ref:`timeconst<actuator-millard2012-timeconst>`
 
             .. grid-item::
+               :ref:`tausmooth<actuator-millard2012-tausmooth>`
+
+            .. grid-item::
                :ref:`minactivation<actuator-millard2012-minactivation>`
 
             .. grid-item::
@@ -3445,6 +3448,9 @@
 
             .. grid-item::
                :ref:`velocitycurve<actuator-millard2012-velocitycurve>`
+
+            .. grid-item::
+               :ref:`actearly<actuator-millard2012-actearly>`
 
 
       .. dropdown:: :ref:`geyer2010<actuator-geyer2010>` |*|
@@ -3556,6 +3562,9 @@
 
             .. grid-item::
                :ref:`velocitycurve<actuator-geyer2010-velocitycurve>`
+
+            .. grid-item::
+               :ref:`actearly<actuator-geyer2010-actearly>`
 
 
       .. dropdown:: :ref:`plugin<actuator-plugin>` |*|
@@ -6993,6 +7002,9 @@
                :ref:`timeconst<default-millard2012-timeconst>`
 
             .. grid-item::
+               :ref:`tausmooth<default-millard2012-tausmooth>`
+
+            .. grid-item::
                :ref:`minactivation<default-millard2012-minactivation>`
 
             .. grid-item::
@@ -7027,6 +7039,9 @@
 
             .. grid-item::
                :ref:`velocitycurve<default-millard2012-velocitycurve>`
+
+            .. grid-item::
+               :ref:`actearly<default-millard2012-actearly>`
 
 
       .. dropdown:: :ref:`geyer2010<default-geyer2010>` :octicon:`dot`
@@ -7108,6 +7123,9 @@
 
             .. grid-item::
                :ref:`velocitycurve<default-geyer2010-velocitycurve>`
+
+            .. grid-item::
+               :ref:`actearly<default-geyer2010-actearly>`
 
 
    .. dropdown:: :ref:`custom<custom>` |*|

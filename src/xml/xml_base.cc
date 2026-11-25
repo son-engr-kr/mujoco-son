@@ -274,6 +274,7 @@ void mjXShortcutFromActuator(mjXShortcut* s, const mjsActuator* a, mjtActuator t
       std::copy(d, d + 2, s->timeconst);
       s->minactivation = d[2];
       s->fiberdamping  = d[3];
+      s->tausmooth     = g[9];
       std::copy(d + 4, d + 10, s->velocitycurve);
       s->force       = g[0];
       s->optlength   = g[1];
@@ -378,6 +379,7 @@ const char* mjXSetToShortcut(mjsActuator* a, mjtActuator type, const mjXShortcut
     case mjACTUATOR_MILLARD2012:
       return mjs_setToMillard2012(a,
                                   c.timeconst,
+                                  s.tausmooth,
                                   s.minactivation,
                                   s.force,
                                   s.optlength,

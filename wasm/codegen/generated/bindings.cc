@@ -2932,13 +2932,13 @@ std::string mjs_setToIntVelocity_wrapper(MjsActuator& actuator, double kp, const
   return std::string(mjs_setToIntVelocity(actuator.get(), kp, kv_.data(), dampratio_.data(), timeconst_.data(), inheritrange));
 }
 
-std::string mjs_setToMillard2012_wrapper(MjsActuator& actuator, const val& timeconst, double minactivation, double force, double optlength, double slacklength, double vmax, double pennation, double fiberdamping, int rigidtendon, const val& activecurve, const val& passivecurve, const val& tendoncurve, const val& velocitycurve) {
+std::string mjs_setToMillard2012_wrapper(MjsActuator& actuator, const val& timeconst, double tausmooth, double minactivation, double force, double optlength, double slacklength, double vmax, double pennation, double fiberdamping, int rigidtendon, const val& activecurve, const val& passivecurve, const val& tendoncurve, const val& velocitycurve) {
   UNPACK_NULLABLE_VALUE(double, timeconst);
   UNPACK_NULLABLE_VALUE(double, activecurve);
   UNPACK_NULLABLE_VALUE(double, passivecurve);
   UNPACK_NULLABLE_VALUE(double, tendoncurve);
   UNPACK_NULLABLE_VALUE(double, velocitycurve);
-  return std::string(mjs_setToMillard2012(actuator.get(), timeconst_.data(), minactivation, force, optlength, slacklength, vmax, pennation, fiberdamping, rigidtendon, activecurve_.data(), passivecurve_.data(), tendoncurve_.data(), velocitycurve_.data()));
+  return std::string(mjs_setToMillard2012(actuator.get(), timeconst_.data(), tausmooth, minactivation, force, optlength, slacklength, vmax, pennation, fiberdamping, rigidtendon, activecurve_.data(), passivecurve_.data(), tendoncurve_.data(), velocitycurve_.data()));
 }
 
 std::string mjs_setToMotor_wrapper(MjsActuator& actuator) {

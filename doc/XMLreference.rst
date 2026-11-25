@@ -7316,12 +7316,12 @@ set as follows:
 Attribute Setting     Attribute Setting
 ========= =========== ========= ==============================================================
 dyntype   millard2012 dynprm    timeconst(2), minactivation, fiberdamping, velocitycurve(6)
-gaintype  millard2012 gainprm   force, optlength, slacklength, vmax, pennation, activecurve(4)
+gaintype  millard2012 gainprm   force, optlength, slacklength, vmax, pennation, activecurve(4), tausmooth
 biastype  millard2012 biasprm   passivecurve(5), tendoncurve(4), rigidtendon
 ========= =========== ========= ==============================================================
 
 The actuator has two activation variables, the fiber length and the activation, see
-:ref:`Compliant-tendon muscles <CMuscleTendon>`. This element has thirteen custom attributes in
+:ref:`Compliant-tendon muscles <CMuscleTendon>`. This element has fifteen custom attributes in
 addition to the common attributes:
 
 .. _actuator-millard2012-name:
@@ -7385,6 +7385,13 @@ addition to the common attributes:
    Activation and deactivation time constants, OpenSim's ``activation_time_constant`` and
    ``deactivation_time_constant``. The activation dynamics are those of the :ref:`muscle
    <actuator-muscle>` actuator.
+
+.. _actuator-millard2012-tausmooth:
+
+:at:`tausmooth`: :at-val:`real, "0"`
+   Width of the smooth transition between the two time constants, as in the :ref:`muscle
+   <actuator-muscle-tausmooth>` actuator. OpenSim switches abruptly, which is the default of 0. It is
+   stored in the last element of gainprm, because dynprm is full.
 
 .. _actuator-millard2012-minactivation:
 
@@ -7461,6 +7468,13 @@ addition to the common attributes:
    ``concentric_curviness`` and ``eccentric_curviness``. The slopes at vmax are not parameters: OpenSim
    sets them from the damping, see :at:`fiberdamping`.
 
+.. _actuator-millard2012-actearly:
+
+:at:`actearly`: :at-val:`[false, true], "false"`
+   As in actuator/ :ref:`general <actuator-general-actearly>`. If true, the fiber is solved with the
+   activation at the end of the step rather than at its start. OpenSim integrates the two together,
+   which is the default of false.
+
 
 .. _actuator-geyer2010:
 
@@ -7484,7 +7498,7 @@ biastype  geyer2010 biasprm   passivecurve(2), tendoncurve, rigidtendon
 The actuator has two activation variables, the fiber length and the activation, see
 :ref:`Compliant-tendon muscles <CMuscleTendon>`. As in Song's implementation, the fiber is solved with
 the activation at the end of the step, so :ref:`actearly <actuator-general-actearly>` is set. This element
-has twelve custom attributes in addition to the common attributes:
+has thirteen custom attributes in addition to the common attributes:
 
 .. _actuator-geyer2010-name:
 
@@ -7609,6 +7623,12 @@ has twelve custom attributes in addition to the common attributes:
 :at:`velocitycurve`: :at-val:`real, "5"`
    Shape factor :math:`K` of the force-velocity curve, which must exceed 1/7.56. The eccentric force
    enhancement is fixed at :math:`N = 1.5`.
+
+.. _actuator-geyer2010-actearly:
+
+:at:`actearly`: :at-val:`[false, true], "true"`
+   As in actuator/ :ref:`general <actuator-general-actearly>`. The default of true solves the fiber with
+   the activation at the end of the step, as Song's implementation does.
 
 
 .. _actuator-plugin:
@@ -11397,6 +11417,8 @@ refsite, tendon, slidersite, cranksite.
 
 .. _default-millard2012-timeconst:
 
+.. _default-millard2012-tausmooth:
+
 .. _default-millard2012-minactivation:
 
 .. _default-millard2012-force:
@@ -11420,6 +11442,8 @@ refsite, tendon, slidersite, cranksite.
 .. _default-millard2012-tendoncurve:
 
 .. _default-millard2012-velocitycurve:
+
+.. _default-millard2012-actearly:
 
 :el-prefix:`default/` |-| **millard2012** |?|
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -11481,6 +11505,8 @@ jointinparent, site, refsite, tendon, slidersite, cranksite.
 .. _default-geyer2010-tendoncurve:
 
 .. _default-geyer2010-velocitycurve:
+
+.. _default-geyer2010-actearly:
 
 :el-prefix:`default/` |-| **geyer2010** |?|
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

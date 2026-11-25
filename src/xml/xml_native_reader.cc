@@ -1298,6 +1298,7 @@ void mjXReader::OneActuator(XMLElement* elem, mjsActuator* actuator, const mjsDe
         break;
       case mjACTUATOR_MILLARD2012: {
         ReadAttr(elem, "timeconst", 2, s.timeconst, text);
+        ReadAttr(elem, "tausmooth", 1, &s.tausmooth, text);
         ReadAttr(elem, "minactivation", 1, &s.minactivation, text);
         ReadAttr(elem, "force", 1, &s.force, text);
         ReadAttr(elem, "optlength", 1, &s.optlength, text);
@@ -1345,6 +1346,12 @@ void mjXReader::OneActuator(XMLElement* elem, mjsActuator* actuator, const mjsDe
     // throw error if the setter failed
     const char* err = mjXSetToShortcut(actuator, acttype, s);
     if (err[0]) { throw mjXError(elem, err); }
+
+    // compliant-tendon muscles: an explicit actearly overrides the setter's
+    if (acttype == mjACTUATOR_MILLARD2012 || acttype == mjACTUATOR_GEYER2010) {
+      int early;
+      if (MapValue(elem, "actearly", &early, bool_map, 2)) { actuator->actearly = early; }
+    }
   }
 
   else {  // SHOULD NOT OCCUR

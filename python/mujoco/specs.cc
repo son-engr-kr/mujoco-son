@@ -1826,14 +1826,14 @@ PYBIND11_MODULE(_specs, m, pybind11::mod_gil_not_used()) {
   mjsActuator.def(
       "set_to_millard2012",
       [](raw::MjsActuator* self, std::array<double, 2> timeconst,
-         double minactivation, double force, double optlength,
+         double tausmooth, double minactivation, double force, double optlength,
          double slacklength, double vmax, double pennation,
          double fiberdamping, bool rigidtendon,
          std::array<double, 4> activecurve, std::array<double, 5> passivecurve,
          std::array<double, 4> tendoncurve,
          std::array<double, 6> velocitycurve) {
         std::string err = mjs_setToMillard2012(
-            self, timeconst.data(), minactivation, force, optlength,
+            self, timeconst.data(), tausmooth, minactivation, force, optlength,
             slacklength, vmax, pennation, fiberdamping, rigidtendon,
             activecurve.data(), passivecurve.data(), tendoncurve.data(),
             velocitycurve.data());
@@ -1842,7 +1842,8 @@ PYBIND11_MODULE(_specs, m, pybind11::mod_gil_not_used()) {
         }
       },
       py::arg("timeconst") = std::array<double, 2>{0.01, 0.04},
-      py::arg("minactivation") = 0.01, py::arg("force") = 1000,
+      py::arg("tausmooth") = 0, py::arg("minactivation") = 0.01,
+      py::arg("force") = 1000,
       py::arg("optlength") = 0.1, py::arg("slacklength") = 0.2,
       py::arg("vmax") = 10, py::arg("pennation") = 0,
       py::arg("fiberdamping") = 0.1, py::arg("rigidtendon") = false,

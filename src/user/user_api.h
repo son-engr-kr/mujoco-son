@@ -279,6 +279,7 @@ MJAPI const char* mjs_setToGeyer2010(mjsActuator* actuator,
 // Set actuator to Millard2012 compliant-tendon muscle, return error on failure.
 MJAPI const char* mjs_setToMillard2012(mjsActuator* actuator,
                                        double       timeconst[2],
+                                       double       tausmooth,
                                        double       minactivation,
                                        double       force,
                                        double       optlength,

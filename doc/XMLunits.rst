@@ -1050,6 +1050,8 @@
      - :math:`L`
    * - :ref:`actuator/millard2012/timeconst<actuator-millard2012-timeconst>`
      - :math:`T`
+   * - :ref:`actuator/millard2012/tausmooth<actuator-millard2012-tausmooth>`
+     - :math:`1`
    * - :ref:`actuator/millard2012/minactivation<actuator-millard2012-minactivation>`
      - :math:`1`
    * - :ref:`actuator/millard2012/force<actuator-millard2012-force>`

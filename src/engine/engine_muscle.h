@@ -60,7 +60,9 @@ typedef enum mjtMillardGain_ {    // gainprm: active fiber
   mjMILLARD_AFL_MIN,              // active force-length: minimum active fiber length (l_opt)
   mjMILLARD_AFL_TRANS,            // active force-length: transition fiber length (l_opt)
   mjMILLARD_AFL_MAX,              // active force-length: maximum active fiber length (l_opt)
-  mjMILLARD_AFL_SLOPE             // active force-length: shallow ascending slope
+  mjMILLARD_AFL_SLOPE,            // active force-length: shallow ascending slope
+  mjMILLARD_TAUSMOOTH             // activation: width of the smooth switch between the time
+                                  // constants (here because dynprm is full; 0 is OpenSim's switch)
 } mjtMillardGain;
 
 typedef enum mjtMillardBias_ {    // biasprm: passive elements

@@ -1810,7 +1810,8 @@ MJAPI const char* mjs_setToDCMotor(mjsActuator* actuator, double motorconst[2], 
 // Set actuator to Millard2012 compliant-tendon muscle; return error if any.
 // Nullable: timeconst, activecurve, passivecurve, tendoncurve, velocitycurve
 MJAPI const char* mjs_setToMillard2012(mjsActuator* actuator, double timeconst[2],
-                                       double minactivation, double force, double optlength,
+                                       double tausmooth, double minactivation, double force,
+                                       double optlength,
                                        double slacklength, double vmax, double pennation,
                                        double fiberdamping, int rigidtendon,
                                        double activecurve[4], double passivecurve[5],

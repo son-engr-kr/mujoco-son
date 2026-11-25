@@ -1774,6 +1774,7 @@ element millard2012 : mjsActuator (control=1) {
   use actuator_dynamics
   use transmission
   timeconst          : double[2] (reading=custom, dim=T)  # activation, deactivation
+  tausmooth          : double (reading=custom, dim=1)
   minactivation      : double (reading=custom, dim=1)
   force              : double (reading=custom, dim=F)  # maximum isometric force
   optlength          : double (reading=custom, dim=Q)  # optimal fiber length
@@ -1786,6 +1787,7 @@ element millard2012 : mjsActuator (control=1) {
   passivecurve       : double[1..5] (reading=custom, dim=1)  # strain0, strain1, klow, kiso, curviness
   tendoncurve        : double[1..4] (reading=custom, dim=1)  # strain1, kiso, ftoe, curviness
   velocitycurve      : double[1..6] (reading=custom, dim=1)  # fmaxecc, conslope, isoslope, eccslope, concurv, ecccurv
+  actearly           : bool (reading=custom)
 }
 
 element geyer2010 : mjsActuator (control=1) {
@@ -1807,6 +1809,7 @@ element geyer2010 : mjsActuator (control=1) {
   passivecurve       : double[1..2] (reading=custom, dim=1)  # rest length, reference strain
   tendoncurve        : double (reading=custom, dim=1)  # reference strain
   velocitycurve      : double (reading=custom, dim=1)  # shape factor K
+  actearly           : bool (reading=custom)
 }
 
 element actuator_plugin : mjsActuator (xml=plugin, control=opaque) {

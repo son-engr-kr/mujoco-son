@@ -1854,6 +1854,7 @@ const char* mjs_setToDCMotor(mjsActuator* actuator,
 // normalized force takes OpenSim's default, which depends on the strain at one normalized force
 const char* mjs_setToMillard2012(mjsActuator* actuator,
                                  double       timeconst[2],
+                                 double       tausmooth,
                                  double       minactivation,
                                  double       force,
                                  double       optlength,
@@ -1898,12 +1899,14 @@ const char* mjs_setToMillard2012(mjsActuator* actuator,
   actuator->gainprm[3] = vmax;
   actuator->gainprm[4] = pennation;
   std::copy(active, active + 4, actuator->gainprm + 5);
+  actuator->gainprm[9] = tausmooth;
 
   // biasprm: passive elements
   std::copy(passive, passive + 5, actuator->biasprm);
   std::copy(tendon, tendon + 4, actuator->biasprm + 5);
   actuator->biasprm[9] = rigidtendon ? 1 : 0;
 
+  if (tausmooth < 0) return "Millard2012 muscle: tausmooth must be non-negative";
   if (force <= 0) return "Millard2012 muscle: force must be positive";
   if (optlength <= 0) return "Millard2012 muscle: optimal fiber length must be positive";
   if (slacklength <= 0) return "Millard2012 muscle: tendon slack length must be positive";

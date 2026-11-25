@@ -11449,6 +11449,10 @@ FUNCTIONS: Mapping[str, FunctionDecl] = dict([
                  nullable=True,
              ),
              FunctionParameterDecl(
+                 name='tausmooth',
+                 type=ValueType(name='double'),
+             ),
+             FunctionParameterDecl(
                  name='minactivation',
                  type=ValueType(name='double'),
              ),

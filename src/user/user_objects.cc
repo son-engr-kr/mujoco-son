@@ -7996,6 +7996,9 @@ void mjCActuator::CheckTendonMuscle() const {
   if (!(d[0] > 0) || !(d[1] > 0)) {
     fail("activation time constants must be positive");
   }
+  if (!(g[9] >= 0)) {
+    fail("tausmooth cannot be negative");
+  }
   if (!(d[2] >= (classic ? 0.01 : 0)) || !(d[2] < 1)) {
     fail("minimum activation must be in [0, 1), and at least 0.01 without fiber damping");
   }

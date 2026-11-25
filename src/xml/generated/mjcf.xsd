@@ -1996,6 +1996,7 @@
         <xs:documentation>activation, deactivation</xs:documentation>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="tausmooth" type="xs:double"/>
     <xs:attribute name="minactivation" type="xs:double"/>
     <xs:attribute name="force" type="xs:double">
       <xs:annotation>
@@ -2044,6 +2045,7 @@
         <xs:documentation>fmaxecc, conslope, isoslope, eccslope, concurv, ecccurv</xs:documentation>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="actearly" type="kw_bool"/>
   </xs:complexType>
 
   <xs:complexType name="default_geyer2010">
@@ -2116,6 +2118,7 @@
         <xs:documentation>shape factor K</xs:documentation>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="actearly" type="kw_bool"/>
   </xs:complexType>
 
   <xs:complexType name="extension_plugin">
@@ -3349,6 +3352,7 @@
         <xs:documentation>activation, deactivation</xs:documentation>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="tausmooth" type="xs:double"/>
     <xs:attribute name="minactivation" type="xs:double"/>
     <xs:attribute name="force" type="xs:double">
       <xs:annotation>
@@ -3397,6 +3401,7 @@
         <xs:documentation>fmaxecc, conslope, isoslope, eccslope, concurv, ecccurv</xs:documentation>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="actearly" type="kw_bool"/>
   </xs:complexType>
 
   <xs:complexType name="geyer2010">
@@ -3479,6 +3484,7 @@
         <xs:documentation>shape factor K</xs:documentation>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="actearly" type="kw_bool"/>
   </xs:complexType>
 
   <xs:complexType name="actuator_plugin">

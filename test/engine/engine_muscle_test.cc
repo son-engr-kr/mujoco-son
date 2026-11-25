@@ -539,5 +539,59 @@ TEST_F(MuscleTest, GeyerRigidTendonShortPathCarriesNoForce) {
   EXPECT_LT(data->actuator_force[0], -500);
 }
 
+// tausmooth and actearly on the shortcuts: DiffNeuSim's activation (a smooth switch between the
+// time constants, no excitation floor, the fiber solved with the next activation)
+TEST_F(MuscleTest, ShortcutActivationOptions) {
+  auto model = LoadModelFromString(Hanging(
+      R"(<millard2012 tendon="path" tausmooth="0.1" minactivation="0" actearly="true"/>)"));
+  ASSERT_THAT(model, NotNull());
+  EXPECT_EQ(model->actuator_gainprm[mjMILLARD_TAUSMOOTH], mjtNum(0.1));
+  EXPECT_EQ(model->actuator_actearly[0], 1);
+
+  // the activation follows mju_muscleDynamics with tausmooth, unfloored
+  auto data = MakeData(model);
+  mj_forward(model.get(), data.get());
+  mj_muscleEquilibrium(model.get(), data.get());
+  data->act[1] = 0.3;
+  for (mjtNum ctrl : {0.0, 0.25, 0.32, 0.9}) {
+    data->ctrl[0] = ctrl;
+    mj_forward(model.get(), data.get());
+    mjtNum prm[3] = {0.01, 0.04, 0.1};
+    EXPECT_EQ(data->act_dot[1], mju_muscleDynamics(ctrl, 0.3, prm)) << ctrl;
+  }
+
+  // defaults: OpenSim's abrupt switch, activation integrated with the fiber; Geyer2010 actearly
+  // can be turned off
+  model = LoadModelFromString(Hanging(R"(<millard2012 tendon="path"/>)"));
+  ASSERT_THAT(model, NotNull());
+  EXPECT_EQ(model->actuator_gainprm[mjMILLARD_TAUSMOOTH], 0);
+  EXPECT_EQ(model->actuator_actearly[0], 0);
+  model = LoadModelFromString(Hanging(R"(<geyer2010 tendon="path" actearly="false"/>)"));
+  ASSERT_THAT(model, NotNull());
+  EXPECT_EQ(model->actuator_actearly[0], 0);
+
+  // a negative width is rejected
+  char error[1024];
+  model = LoadModelFromString(Hanging(R"(<millard2012 tendon="path" tausmooth="-1"/>)"), error,
+                              sizeof(error));
+  EXPECT_EQ(model, nullptr);
+  EXPECT_THAT(error, HasSubstr("tausmooth"));
+}
+
+TEST_F(MuscleTest, ShortcutActivationOptionsSaveRoundTrip) {
+  for (const char* muscle : {R"(<millard2012 tendon="path" tausmooth="0.1" actearly="true"/>)",
+                             R"(<geyer2010 tendon="path" actearly="false"/>)"}) {
+    auto model = LoadModelFromString(Hanging(muscle));
+    ASSERT_THAT(model, NotNull()) << muscle;
+    std::string saved = SaveAndReadXml(model.get());
+    auto reloaded = LoadModelFromString(saved);
+    ASSERT_THAT(reloaded, NotNull()) << saved;
+    EXPECT_EQ(reloaded->actuator_actearly[0], model->actuator_actearly[0]) << saved;
+    for (int i = 0; i < mjNGAIN; i++) {
+      EXPECT_EQ(reloaded->actuator_gainprm[i], model->actuator_gainprm[i]) << i << saved;
+    }
+  }
+}
+
 }  // namespace
 }  // namespace mujoco

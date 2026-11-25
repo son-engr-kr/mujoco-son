@@ -1589,6 +1589,7 @@ XMLElement* mjXWriter::OneActuator(XMLElement* section, const mjCActuator* pactu
       break;
     case mjACTUATOR_MILLARD2012:
       WriteAttr(elem, "timeconst", 2, s.timeconst, d.timeconst);
+      WriteAttr(elem, "tausmooth", 1, &s.tausmooth, &d.tausmooth);
       WriteAttr(elem, "minactivation", 1, &s.minactivation, &d.minactivation);
       WriteAttr(elem, "force", 1, &s.force, &d.force);
       WriteAttr(elem, "optlength", 1, &s.optlength, &d.optlength);
