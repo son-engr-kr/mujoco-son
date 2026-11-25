@@ -1,0 +1,336 @@
+# Build and publish release artifacts (Python wheels + simulate executable)
+# for Linux x86_64, macOS arm64, macOS x86_64, Windows x86_64.
+#
+# Triggers:
+#   - Pushing a tag matching `v*` (recommended: e.g. v3.16.0+son6.0)
+#   - Manual dispatch from the Actions tab
+#
+# Outputs:
+#   - One Python sdist (built once on Linux)
+#   - cp311 and cp312 wheels for linux x86_64, macOS arm64 and windows x86_64
+#   - Three executable bundles (simulate + libraries + models)
+#   - No MJX wheel: son6 is upstream's MJX, which has no compliant-tendon muscles
+#   - A draft GitHub Release with all of the above attached
+#
+# Notes / known quirks (see for_develop.md and prior local build):
+#   - CMAKE_POLICY_VERSION_MINIMUM=3.5 is required for the bundled qhull dep
+#   - MUJOCO_CXX_FLAGS=-Wno-error is needed because son code has unused-var /
+#     unused-function / sometimes-uninitialized warnings that clang treats as
+#     errors but MSVC does not
+#   - On POSIX, plugins land in build/lib alongside libmujoco; we stage them
+#     into a dedicated build/mujoco_plugin/ so setup.py's plugin walk does not
+#     pick up libmujoco itself
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.label }}-py${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux, macos, windows]
+        python: ['3.11', '3.12']
+        include:
+          - target: linux
+            os: ubuntu-22.04
+            label: linux-x86_64
+            shell: bash
+            cmake_args: -G Ninja "-DMUJOCO_CXX_FLAGS=-Wno-error"
+            python_arch: x64
+          - target: macos
+            os: macos-15
+            label: macos-arm64
+            shell: bash
+            cmake_args: -G Ninja "-DMUJOCO_CXX_FLAGS=-Wno-error"
+            archflags: -arch arm64
+            macosx_deployment_target: "11.0"
+            # _PYTHON_HOST_PLATFORM overrides setuptools' auto-detected wheel
+            # platform tag. Without it, hosted Python (universal2) would
+            # produce a universal2 wheel filename even though the binary inside
+            # is single-arch, which then breaks delocate.
+            python_host_platform: macosx-11.0-arm64
+            python_arch: x64
+          # macos-15-large (Intel Mac, x86_64) requires a paid GitHub plan.
+          # Disabled until billing is configured. Apple Silicon (macos-arm64)
+          # covers the vast majority of current macOS users.
+          - target: windows
+            os: windows-2022
+            label: windows-x86_64
+            shell: bash
+            cmake_args: -G Ninja
+            python_arch: x64
+
+    runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Prepare Linux
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libgl1-mesa-dev libxinerama-dev libxcursor-dev \
+          libxrandr-dev libxi-dev ninja-build patchelf
+
+    - name: Prepare macOS
+      if: runner.os == 'macOS'
+      run: brew install ninja
+
+    - name: Set up MSVC (Windows)
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Install Ninja (Windows)
+      if: runner.os == 'Windows'
+      uses: seanmiddleditch/gha-setup-ninja@v5
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python }}
+        architecture: ${{ matrix.python_arch }}
+
+    - name: Set workspace path (POSIX)
+      if: runner.os != 'Windows'
+      run: echo "WORKSPACE=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
+    - name: Set workspace path (Windows)
+      if: runner.os == 'Windows'
+      run: echo "WORKSPACE=$(cygpath -m "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
+
+    - name: Create venv and install Python build deps
+      # make_sdist.sh requires VIRTUAL_ENV to be set, so we create one and
+      # source it for the rest of the steps via $GITHUB_PATH / $GITHUB_ENV.
+      run: |
+        python -m venv "${{ runner.temp }}/venv"
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          VENV_BIN="${{ runner.temp }}/venv/Scripts"
+        else
+          VENV_BIN="${{ runner.temp }}/venv/bin"
+        fi
+        echo "$VENV_BIN" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=${{ runner.temp }}/venv" >> "$GITHUB_ENV"
+        "$VENV_BIN/python" -m pip install --upgrade pip
+        "$VENV_BIN/python" -m pip install --require-hashes -r python/build_requirements.txt
+        # Wheel repair tools (one per platform; harmless to install everywhere).
+        # Pull auditwheel from PyPI unconstrained: the hashed pin in
+        # build_requirements.txt is 5.4.0, which lacks the smarter "auto"
+        # platform detection in 6.x and instead tries to downgrade the wheel
+        # to manylinux_2_5 and fails.
+        "$VENV_BIN/python" -m pip install -U auditwheel delocate delvewheel
+
+    - name: Configure CMake
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DMUJOCO_BUILD_TESTS=OFF \
+          -DMUJOCO_TEST_PYTHON_UTIL=OFF \
+          ${{ matrix.cmake_args }}
+
+    - name: Build MuJoCo + simulate
+      run: cmake --build build --config Release -j
+
+    - name: Stage plugins (POSIX)
+      if: runner.os != 'Windows'
+      run: |
+        mkdir -p build/mujoco_plugin
+        cp build/lib/libactuator.* build/mujoco_plugin/
+        cp build/lib/libelasticity.* build/mujoco_plugin/
+        cp build/lib/libsensor.* build/mujoco_plugin/
+        cp build/lib/libsdf_plugin.* build/mujoco_plugin/
+
+    - name: Stage plugins (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        mkdir -p build/mujoco_plugin
+        cp build/bin/actuator.dll build/mujoco_plugin/
+        cp build/bin/elasticity.dll build/mujoco_plugin/
+        cp build/bin/sensor.dll build/mujoco_plugin/
+        cp build/bin/sdf_plugin.dll build/mujoco_plugin/ || true
+
+    - name: Make sdist
+      working-directory: python
+      run: ./make_sdist.sh
+
+    - name: Build wheel
+      env:
+        MUJOCO_PATH: ${{ env.WORKSPACE }}
+        ARCHFLAGS: ${{ matrix.archflags }}
+        MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macosx_deployment_target }}
+      run: |
+        # Only export _PYTHON_HOST_PLATFORM when the matrix actually sets it
+        # (currently macOS only); an empty value confuses setuptools' build
+        # path naming and breaks the wheel build entirely.
+        if [[ -n "${{ matrix.python_host_platform }}" ]]; then
+          export _PYTHON_HOST_PLATFORM="${{ matrix.python_host_platform }}"
+        fi
+        export MUJOCO_PLUGIN_PATH="${{ env.WORKSPACE }}/build/mujoco_plugin"
+        pip wheel --no-deps --no-build-isolation python/dist/mujoco-*.tar.gz -w python/dist
+
+    - name: Repair wheel (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        mkdir -p python/dist/fixed
+        WHL=$(ls python/dist/mujoco-*linux_x86_64.whl | head -1)
+        # auditwheel would normally fix rpaths and bundle deps here, but
+        # ubuntu-22.04 emits glibc 2.35 symbols that don't fit any current
+        # manylinux policy, so it refuses to repair. setup.py already
+        # bundles libmujoco.so into mujoco/ via _copy_external_libraries,
+        # so what's left is patching the extension rpaths from the absolute
+        # build-dir path to $ORIGIN. The wheel keeps its linux_x86_64 tag,
+        # which pip accepts for direct/URL installs on glibc-2.35+ systems.
+        UNPACK=$(mktemp -d)
+        wheel unpack -d "$UNPACK" "$WHL"
+        UNPACKED=$(ls "$UNPACK" | head -1)
+        PKG_DIR="$UNPACK/$UNPACKED/mujoco"
+        # Top-level extensions (mujoco/_*.so) and bundled libmujoco need to
+        # resolve siblings → $ORIGIN.
+        find "$PKG_DIR" -maxdepth 1 -name '*.so*' -exec patchelf --set-rpath '$ORIGIN' {} \;
+        # Plugin libraries (mujoco/plugin/*.so) need to reach libmujoco in
+        # the parent dir → $ORIGIN/..
+        find "$PKG_DIR/plugin" -name '*.so*' -exec patchelf --set-rpath '$ORIGIN/..' {} \; 2>/dev/null || true
+        wheel pack "$UNPACK/$UNPACKED" --dest-dir python/dist/fixed
+
+    - name: Repair wheel (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        mkdir -p python/dist/fixed
+        delocate-wheel -v -w python/dist/fixed python/dist/mujoco-*macosx_*.whl
+
+    - name: Repair wheel (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        mkdir -p python/dist/fixed
+        delvewheel repair python/dist/mujoco-*win_*.whl -w python/dist/fixed \
+          --add-path build/bin
+
+    - name: Smoke test wheel
+      env:
+        MUJOCO_GL: disable
+      run: |
+        TEST_VENV="${{ runner.temp }}/testvenv"
+        python -m venv "$TEST_VENV"
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          TEST_BIN="$TEST_VENV/Scripts"
+        else
+          TEST_BIN="$TEST_VENV/bin"
+        fi
+        "$TEST_BIN/python" -m pip install --upgrade pip
+        "$TEST_BIN/python" -m pip install python/dist/fixed/mujoco-*.whl
+        "$TEST_BIN/python" -c "import mujoco; m=mujoco.MjModel.from_xml_string('<mujoco/>'); d=mujoco.MjData(m); mujoco.mj_step(m,d); print('OK', mujoco.__version__)"
+
+    - name: Package executable bundle (POSIX)
+      if: runner.os != 'Windows' && matrix.python == '3.11'
+      run: |
+        BUNDLE="mujoco-son-${{ matrix.label }}"
+        mkdir -p "$BUNDLE/bin" "$BUNDLE/lib"
+        cp build/bin/simulate "$BUNDLE/bin/"
+        cp build/lib/libmujoco.* "$BUNDLE/lib/"
+        cp build/lib/lib*.dylib "$BUNDLE/lib/" 2>/dev/null || true
+        cp build/lib/lib*.so* "$BUNDLE/lib/" 2>/dev/null || true
+        cp -r model "$BUNDLE/" 2>/dev/null || true
+        tar czf "${BUNDLE}.tar.gz" "$BUNDLE"
+
+    - name: Package executable bundle (Windows)
+      if: runner.os == 'Windows' && matrix.python == '3.11'
+      run: |
+        BUNDLE="mujoco-son-${{ matrix.label }}"
+        mkdir -p "$BUNDLE"
+        cp build/bin/simulate.exe "$BUNDLE/"
+        cp build/bin/*.dll "$BUNDLE/"
+        cp -r model "$BUNDLE/" 2>/dev/null || true
+        7z a "${BUNDLE}.zip" "$BUNDLE/"
+
+    - name: Upload wheel artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: wheel-${{ matrix.label }}-py${{ matrix.python }}
+        path: python/dist/fixed/*.whl
+
+    - name: Upload sdist artifact (Linux only)
+      if: matrix.label == 'linux-x86_64' && matrix.python == '3.11'
+      uses: actions/upload-artifact@v4
+      with:
+        name: sdist
+        path: python/dist/mujoco-*.tar.gz
+
+    - name: Upload executable bundle
+      if: matrix.python == '3.11'
+      uses: actions/upload-artifact@v4
+      with:
+        name: bundle-${{ matrix.label }}
+        path: |
+          mujoco-son-*.tar.gz
+          mujoco-son-*.zip
+
+  release:
+    name: Create GitHub release
+    needs: [build]
+    runs-on: ubuntu-latest
+    # Run as long as the build job has finished (even if some matrix entries
+    # failed), so e.g. a billing-blocked or transiently failing platform does
+    # not prevent the rest of the release from being assembled. The release
+    # is uploaded as a draft, so partial output can be reviewed before publish.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: List artifacts
+      run: find artifacts -type f | sort
+
+    # A tag whose version does not match python/pyproject.toml produces artifacts named after
+    # something other than the tag, which is the classic way to publish a release nobody can
+    # install from the URLs in the README.
+    - uses: actions/checkout@v4
+      with:
+        path: src
+
+    - name: Check the tag matches the package version
+      run: |
+        tag_version="${GITHUB_REF_NAME#v}"
+        pkg_version="$(sed -n 's/^version = "\(.*\)"/\1/p' src/python/pyproject.toml)"
+        echo "tag: ${tag_version}   pyproject: ${pkg_version}"
+        if [ "${tag_version}" != "${pkg_version}" ]; then
+          echo "::error::tag ${GITHUB_REF_NAME} does not match python/pyproject.toml version ${pkg_version}"
+          exit 1
+        fi
+
+    # Mark alpha/beta/rc tags as pre-releases. Local version segments carry the marker in this
+    # fork (v3.3.3+son4.0a1), so match a trailing a<N>/b<N>/rc<N>.
+    - name: Classify the release
+      id: classify
+      run: |
+        if [[ "${GITHUB_REF_NAME}" =~ (a|b|rc)[0-9]+$ ]]; then
+          echo "prerelease=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "prerelease=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Create release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          artifacts/**/*.whl
+          artifacts/**/*.tar.gz
+          artifacts/**/*.zip
+        draft: true
+        prerelease: ${{ steps.classify.outputs.prerelease }}
+        generate_release_notes: true
