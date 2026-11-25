@@ -64,7 +64,10 @@ jobs:
             os: windows-2022
             label: windows-x86_64
             shell: bash
-            cmake_args: -G Ninja
+            # clang-cl, as upstream: upstream builds the Python bindings on Windows only with
+            # clang-cl, and MSVC fails to link _structs (MjWrapper of mjVisual's unnamed structs)
+            cmake_args: -G Ninja -DCMAKE_C_COMPILER:STRING=clang-cl -DCMAKE_CXX_COMPILER:STRING=clang-cl
+            wheel_cmake_args: -G Ninja -DCMAKE_C_COMPILER:STRING=clang-cl -DCMAKE_CXX_COMPILER:STRING=clang-cl
             python_arch: x64
 
     runs-on: ${{ matrix.os }}
@@ -81,8 +84,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          libgl1-mesa-dev libxinerama-dev libxcursor-dev \
-          libxrandr-dev libxi-dev ninja-build patchelf
+          libgl1-mesa-dev libwayland-dev libxinerama-dev libxcursor-dev \
+          libxkbcommon-dev libxrandr-dev libxi-dev ninja-build patchelf
 
     - name: Prepare macOS
       if: runner.os == 'macOS'
@@ -171,6 +174,7 @@ jobs:
         MUJOCO_PATH: ${{ env.WORKSPACE }}
         ARCHFLAGS: ${{ matrix.archflags }}
         MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macosx_deployment_target }}
+        MUJOCO_CMAKE_ARGS: ${{ matrix.wheel_cmake_args }}
       run: |
         # Only export _PYTHON_HOST_PLATFORM when the matrix actually sets it
         # (currently macOS only); an empty value confuses setuptools' build
